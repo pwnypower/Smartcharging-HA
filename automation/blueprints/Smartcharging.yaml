@@ -70,7 +70,7 @@ action:
         {% if blocks %}
           {% set l = [] %}
           {% for b in blocks %}
-            {% set _ = l.append(b.price | float) %}
+            {% set _ = l.append(b['price'] | float) %}
           {% endfor %}
           {{ l }}
         {% else %}
