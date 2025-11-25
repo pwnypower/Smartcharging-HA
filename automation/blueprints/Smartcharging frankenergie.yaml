@@ -1,46 +1,29 @@
 blueprint:
-  name: Slimme batterij laadplanning – Frank Energie (v3)
-  description: >
-    Slim thuisbatterij laden op basis van Frank Energie uurprijzen,
-    berekende prijs-gemiddeldes en zonopbrengst.
+  name: Slimme batterij laadplanning - Frank Energie
+  description: Laadt automatisch de batterij op de goedkoopste momenten op basis van Frank Energie prijzen.
   domain: automation
-
   input:
-    energy_provider:
-      name: Energieleverancier
-      description: Kies Frank Energie
-      default: "frank"
-      selector:
-        select:
-          options:
-            - frank
-
     battery_reserve_switch:
-      name: Batterij reserve-modus schakelaar
+      name: Reserve mode switch
       selector:
         entity:
           domain: switch
-
     battery_soc_sensor:
-      name: Batterij SOC sensor (%)
+      name: Batterij SOC sensor
       selector:
         entity:
           domain: sensor
-
     frank_price_sensor:
-      name: Frank Energie prijs-entiteit
-      description: Sensor met attribute "prices"
+      name: Frank Energie prijs sensor
       selector:
         entity:
           domain: sensor
-
     solar_forecast_sensor:
       name: Verwachte zonopbrengst (kWh)
       default: ""
       selector:
         entity:
           domain: sensor
-
     min_solar_day:
       name: Minimale zon kWh voor dagladen
       default: 8
@@ -50,27 +33,22 @@ blueprint:
           max: 20
           step: 0.1
           unit_of_measurement: "kWh"
-
     load_start_hour:
-      name: Start uur waarop laden mag
+      name: Start uur controleren
       default: 0
       selector:
         number:
           min: 0
           max: 23
-
     load_end_hour:
-      name: Eind uur waarop laden mag
+      name: Eind uur controleren
       default: 23
       selector:
         number:
           min: 0
           max: 23
 
-mode: single
-
 variables:
-  energy_provider: !input energy_provider
   battery_reserve_switch: !input battery_reserve_switch
   battery_soc_sensor: !input battery_soc_sensor
   frank_price_sensor: !input frank_price_sensor
@@ -84,107 +62,97 @@ trigger:
     minutes: "/5"
 
 action:
+  - variables:
+      # JSON parsing van Frank Energie prijzen
+      raw: "{{ state_attr(frank_price_sensor, 'prices') }}"
+      prices_json: >-
+        {% if raw %}
+          {% set text = raw | string %}
+          {% set matches = text | regex_findall(
+            "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
+            "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
+            "price': ([0-9.]+)"
+          ) %}
+          [
+          {%- for m in matches %}
+            {
+              "from_hour": {{ m[0]|int }},
+              "from_minute": {{ m[1]|int }},
+              "till_hour": {{ m[2]|int }},
+              "till_minute": {{ m[3]|int }},
+              "price": {{ m[4]|float }}
+            }{{ "," if not loop.last }}
+          {%- endfor %}
+          ]
+        {% else %} [] {% endif %}
+
+      # Berekeningen gemiddelde prijs
+      all_prices: "{{ prices_json | map(attribute='price') | list }}"
+      avg_day: >-
+        {% if all_prices|length > 0 %}
+          {{ (all_prices | sum / all_prices|length) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
+      avg_night: >-
+        {% set night_prices = prices_json | selectattr('from_hour','lt',7) | map(attribute='price') | list %}
+        {% if night_prices | length > 0 %}
+          {{ (night_prices | sum / night_prices|length) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
+      avg_dayblock: >-
+        {% set dayblock_prices = prices_json | selectattr('from_hour','ge',11) | selectattr('from_hour','lt',15) | map(attribute='price') | list %}
+        {% if dayblock_prices | length > 0 %}
+          {{ (dayblock_prices | sum / dayblock_prices|length) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
+      current_hour: "{{ now().hour }}"
+      current_price: "{{ states(frank_price_sensor) | float }}"
+
   - choose:
-      - conditions: "{{ energy_provider == 'frank' }}"
+      - conditions:
+          - condition: numeric_state
+            entity_id: !input battery_soc_sensor
+            below: 100
+          - condition: template
+            value_template: >-
+              {% if current_hour >= load_start_hour and current_hour <= load_end_hour %}
+                {% if current_hour >=0 and current_hour < 7 %}
+                  {{ avg_night is not none and current_price < avg_night }}
+                {% elif current_hour >=11 and current_hour < 15 %}
+                  {{ avg_dayblock is not none and current_price < avg_dayblock }}
+                {% else %}
+                  {{ avg_day is not none and current_price < avg_day }}
+                {% endif %}
+              {% else %}
+                false
+              {% endif %}
+          - condition: numeric_state
+            entity_id: !input solar_forecast_sensor
+            below: !input min_solar_day
         sequence:
-          # --------------------------
-          # Frank Energie prijs-parser (veilig)
-          # --------------------------
-          - variables:
-              raw: "{{ state_attr(frank_price_sensor, 'prices') }}"
-              text: "{{ raw | string }}"
-              parsed: >
-                {% set matches = text | regex_findall(
-                  "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
-                  "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
-                  "price': ([0-9.]+)"
-                ) %}
-                {% set out = [] %}
-                {% for m in matches %}
-                  {% set out = out + [{
-                    'from_hour': m[0]|int,
-                    'from_minute': m[1]|int,
-                    'till_hour': m[2]|int,
-                    'till_minute': m[3]|int,
-                    'price': m[4]|float
-                  }] %}
-                {% endfor %}
-                {{ out }}
+          - service: switch.turn_on
+            target:
+              entity_id: !input battery_reserve_switch
 
-          # --------------------------
-          # Gemiddelden berekenen
-          # --------------------------
-          - variables:
-              prices: "{{ parsed | map(attribute='price') | list }}"
-              avg_day: >
-                {% if prices | length > 0 %}
-                  {{ (prices | sum / prices | length) | round(4) }}
-                {% else %} none
-                {% endif %}
-              avg_night: >
-                {% if prices | length >= 7 %}
-                  {{ (prices[0:7] | sum / 7) | round(4) }}
-                {% else %} none
-                {% endif %}
-              avg_dayblock: >
-                {% if prices | length >= 16 %}
-                  {{ (prices[11:15] | sum / 4) | round(4) }}
-                {% else %} none
-                {% endif %}
-              current_price: "{{ states(frank_price_sensor) | float }}"
-              current_hour: "{{ now().hour }}"
-
-          # --------------------------
-          # Laad- en stoplogica
-          # --------------------------
-          - choose:
-              # Laden
-              - conditions:
-                  - condition: numeric_state
-                    entity_id: !input battery_soc_sensor
-                    below: 100
-
-                  - condition: template
-                    value_template: >
-                      {% set h = now().hour %}
-                      {{ h >= load_start_hour and h <= load_end_hour }}
-
-                  - condition: numeric_state
-                    entity_id: !input solar_forecast_sensor
-                    below: !input min_solar_day
-
-                  - condition: template
-                    value_template: >
-                      {% if current_hour < 7 %}
-                        {{ avg_night != none and current_price < avg_night }}
-                      {% elif current_hour >= 11 and current_hour < 15 %}
-                        {{ avg_dayblock != none and current_price < avg_dayblock }}
-                      {% else %}
-                        {{ avg_day != none and current_price < avg_day }}
-                      {% endif %}
-                sequence:
-                  - service: switch.turn_on
-                    target:
-                      entity_id: !input battery_reserve_switch
-
-              # Stoppen
-              - conditions:
-                  - condition: or
-                    conditions:
-                      - condition: numeric_state
-                        entity_id: !input battery_soc_sensor
-                        above: 99
-
-                      - condition: template
-                        value_template: >
-                          {% if current_hour < 7 %}
-                            {{ avg_night != none and current_price >= avg_night }}
-                          {% elif current_hour >= 11 and current_hour < 15 %}
-                            {{ avg_dayblock != none and current_price >= avg_dayblock }}
-                          {% else %}
-                            {{ avg_day != none and current_price >= avg_day }}
-                          {% endif %}
-                sequence:
-                  - service: switch.turn_off
-                    target:
-                      entity_id: !input battery_reserve_switch
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: numeric_state
+                entity_id: !input battery_soc_sensor
+                above: 99
+              - condition: template
+                value_template: >-
+                  {% if current_hour >=0 and current_hour < 7 %}
+                    {{ avg_night is not none and current_price >= avg_night }}
+                  {% elif current_hour >=11 and current_hour < 15 %}
+                    {{ avg_dayblock is not none and current_price >= avg_dayblock }}
+                  {% else %}
+                    {{ avg_day is not none and current_price >= avg_day }}
+                  {% endif %}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input battery_reserve_switch
