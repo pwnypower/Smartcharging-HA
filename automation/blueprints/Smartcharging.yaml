@@ -65,9 +65,23 @@ trigger:
 
 action:
   - variables:
-      blocks: "{{ state_attr(electricity_price_sensor, 'data') }}"
-      prices: "{{ blocks | map(attribute='price') | map('float') | list if blocks else [] }}"
-      avg_day: "{{ (prices | sum / prices | length) | round(4) if prices|length >0 else none }}"
+      blocks: "{{ state_attr(electricity_price_sensor, 'prices') }}"
+      prices: >
+        {% if blocks %}
+          {% set l = [] %}
+          {% for b in blocks %}
+            {% set _ = l.append(b.price | float) %}
+          {% endfor %}
+          {{ l }}
+        {% else %}
+          []
+        {% endif %}
+      avg_day: >
+        {% if prices|length > 0 %}
+          {{ (prices | sum / prices|length) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
       current_price: "{{ states(electricity_price_sensor) | float }}"
       current_hour: "{{ now().hour }}"
 
