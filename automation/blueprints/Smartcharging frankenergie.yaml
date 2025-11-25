@@ -18,6 +18,7 @@ blueprint:
 
     battery_reserve_switch:
       name: Batterij reserve-modus schakelaar
+      selector:
         entity:
           domain: switch
 
