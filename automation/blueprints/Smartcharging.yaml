@@ -1,6 +1,6 @@
 blueprint:
-  name: Slimme batterij laadplanning dynamische tijden
-  description: Laadt de batterij automatisch op de goedkoopste momenten van de dag, gebaseerd op actuele prijs en gemiddelde, met vrije tijdsblokken.
+  name: Slimme batterij laadplanning met dynamische tijd en gemiddelde prijs
+  description: Laadt automatisch de batterij op de goedkoopste momenten op basis van actuele prijzen en gemiddelde prijs per blok.
   domain: automation
   input:
     battery_reserve_switch:
@@ -25,7 +25,7 @@ blueprint:
         entity:
           domain: sensor
     min_solar_day:
-      name: Minimale zon kWh voor overdag
+      name: Minimale zon kWh voor dagladen
       default: 8
       selector:
         number:
@@ -35,7 +35,6 @@ blueprint:
           unit_of_measurement: "kWh"
     load_start_hour:
       name: Start uur controleren
-      description: Vanaf welk uur mag laden starten
       default: 0
       selector:
         number:
@@ -43,7 +42,6 @@ blueprint:
           max: 23
     load_end_hour:
       name: Eind uur controleren
-      description: Tot welk uur mag laden
       default: 23
       selector:
         number:
@@ -68,11 +66,7 @@ action:
       blocks: "{{ state_attr(electricity_price_sensor, 'prices') }}"
       prices: >
         {% if blocks %}
-          {% set l = [] %}
-          {% for b in blocks %}
-            {% set _ = l.append(b['price'] | float) %}
-          {% endfor %}
-          {{ l }}
+          {{ blocks | map(attribute='price') | map('float') | list }}
         {% else %}
           []
         {% endif %}
@@ -82,21 +76,40 @@ action:
         {% else %}
           none
         {% endif %}
+      avg_night: >
+        {% if prices|length >= 8 %}
+          {{ (prices[0:7] | sum / 7) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
+      avg_dayblock: >
+        {% if prices|length >= 16 %}
+          {{ (prices[11:15] | sum / 4) | round(4) }}
+        {% else %}
+          none
+        {% endif %}
       current_price: "{{ states(electricity_price_sensor) | float }}"
       current_hour: "{{ now().hour }}"
 
   - choose:
-      # Laden: prijs lager dan gemiddelde en SOC <100% en tijd binnen user-definities
+      # Laden op basis van gemiddelde prijs en SOC
       - conditions:
           - condition: numeric_state
             entity_id: !input battery_soc_sensor
             below: 100
           - condition: template
             value_template: >
-              {{ avg_day is not none and current_price < avg_day }}
-          - condition: template
-            value_template: >
-              {{ current_hour >= load_start_hour and current_hour <= load_end_hour }}
+              {% if current_hour >= load_start_hour and current_hour <= load_end_hour %}
+                {% if current_hour >=0 and current_hour < 7 %}
+                  {{ avg_night is not none and current_price < avg_night }}
+                {% elif current_hour >=11 and current_hour < 15 %}
+                  {{ avg_dayblock is not none and current_price < avg_dayblock }}
+                {% else %}
+                  {{ avg_day is not none and current_price < avg_day }}
+                {% endif %}
+              {% else %}
+                false
+              {% endif %}
           - condition: numeric_state
             entity_id: !input solar_forecast_sensor
             below: !input min_solar_day
@@ -105,7 +118,7 @@ action:
             target:
               entity_id: !input battery_reserve_switch
 
-      # Stoppen als te duur of SOC vol
+      # Stoppen als te duur of batterij vol
       - conditions:
           - condition: or
             conditions:
@@ -114,7 +127,13 @@ action:
                 above: 99
               - condition: template
                 value_template: >
-                  {{ avg_day is not none and current_price >= avg_day }}
+                  {% if current_hour >=0 and current_hour < 7 %}
+                    {{ avg_night is not none and current_price >= avg_night }}
+                  {% elif current_hour >=11 and current_hour < 15 %}
+                    {{ avg_dayblock is not none and current_price >= avg_dayblock }}
+                  {% else %}
+                    {{ avg_day is not none and current_price >= avg_day }}
+                  {% endif %}
         sequence:
           - service: switch.turn_off
             target:
