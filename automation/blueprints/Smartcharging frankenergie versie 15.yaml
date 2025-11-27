@@ -1,14 +1,14 @@
 blueprint:
-  name: "Frank Energie - V18 (Large Data Fix)"
+  name: "Frank Energie - V19 (V4 Engine + V18 Logic)"
   description: >
-    Opgelost: "Template output exceeded maximum size".
+    De ultieme combinatie.
     
-    Deze versie verwerkt grote datasets direct in het geheugen zonder ze eerst naar tekst te converteren.
+    Gebruikt de originele Regex-methode (V4) om prijzen te lezen, gecombineerd met de geavanceerde logica van V18.
     
     FUNCTIES:
-    - Werkt met enorme prijs-lijsten (historie).
-    - Correcte 'from' en UTC tijdzone parsing.
-    - Alle slimme functies (Tijdsloten, Boost, Rendement, etc.).
+    - Regex Parsing (Werkt met jouw specifieke dataformaat).
+    - Tijdsloten (Nacht/Middag).
+    - Boost, Notificaties, BMS Vertraging & Rendementscheck.
   domain: automation
   input:
     # --- TIJDSLOTEN ---
@@ -199,46 +199,57 @@ action:
       is_day: "{{ now_time >= day_start and now_time < day_end }}"
       is_in_slot: "{{ is_night or is_day }}"
 
-      # --- 2. DATA PROCESSING (MEMORY OPTIMIZED) ---
-      # We halen de data HIER pas op, binnen de set-block.
-      # Hierdoor wordt het niet geconverteerd naar een string variabele die kan crashen.
+      # --- 2. DE ORIGINELE V4 REGEX PARSING ---
+      # Dit is exact de code uit jouw originele verzoek die werkt met jouw dataformaat
+      raw: "{{ state_attr(frank_price_sensor, 'prices') }}"
+      prices_json: >-
+        {% if raw %}
+          {% set text = raw | string %}
+          {% set matches = text | regex_findall(
+            "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
+            "datetime\\.datetime\\(\\d+, \\d+, \\d+, (\\d+), (\\d+).*?\\).*?"
+            "price': ([0-9.]+)"
+          ) %}
+          [
+          {%- for m in matches %}
+            {
+              "from_hour": {{ m[0]|int }},
+              "from_minute": {{ m[1]|int }},
+              "till_hour": {{ m[2]|int }},
+              "till_minute": {{ m[3]|int }},
+              "price": {{ m[4]|float }}
+            }{{ "," if not loop.last }}
+          {%- endfor %}
+          ]
+        {% else %} [] {% endif %}
+
+      # --- 3. FILTEREN OP HUIDIG SLOT ---
+      # Nu filteren we die JSON lijst op basis van de ingestelde tijdsloten
       filtered_data: >-
         {% set output = namespace(list=[], avg=0) %}
-        {% set raw_data = state_attr(frank_price_sensor, 'prices') %}
         
         {# Alleen verwerken als er data is en we in een slot zitten #}
-        {% if raw_data and raw_data is iterable and is_in_slot %}
+        {% if prices_json and is_in_slot %}
            
+           {# Converteer tijdslot grenzen naar integers (uren) #}
            {% set ns = night_start.split(':')[0] | int %}
            {% set ne = night_end.split(':')[0] | int %}
            {% set ds = day_start.split(':')[0] | int %}
            {% set de = day_end.split(':')[0] | int %}
 
-           {% for item in raw_data %}
-              {# PRIJS #}
-              {% set p_val = item.price | default(item.market_price) | default(item.value) | default(none) %}
+           {% for item in prices_json %}
+              {% set p_hour = item.from_hour %}
+              {% set p_price = item.price %}
               
-              {# TIJD (UTC CORRECTIE) #}
-              {% set p_hour = none %}
-              {% if item['from'] is defined %}
-                 {% set p_hour = as_timestamp(item['from']) | timestamp_custom('%H') | int %}
-              {% elif item.start_time is defined %}
-                 {% set p_hour = as_timestamp(item.start_time) | timestamp_custom('%H') | int %}
-              {% elif item.date is defined %}
-                 {% set p_hour = as_timestamp(item.date) | timestamp_custom('%H') | int %}
-              {% endif %}
-
-              {# FILTER #}
-              {% if p_val is not none and p_hour is not none %}
-                 {% set p_val = p_val | float %}
-                 {% if is_night and (p_hour >= ns and p_hour < ne) %}
-                    {% set output.list = output.list + [p_val] %}
-                 {% elif is_day and (p_hour >= ds and p_hour < de) %}
-                    {% set output.list = output.list + [p_val] %}
-                 {% endif %}
+              {# FILTER: Zit dit uur in het huidige actieve blok? #}
+              {% if is_night and (p_hour >= ns and p_hour < ne) %}
+                 {% set output.list = output.list + [p_price] %}
+              {% elif is_day and (p_hour >= ds and p_hour < de) %}
+                 {% set output.list = output.list + [p_price] %}
               {% endif %}
            {% endfor %}
 
+           {# Bereken gemiddelde #}
            {% if output.list | length > 0 %}
               {% set output.avg = (output.list | sum / output.list | length) %}
            {% endif %}
@@ -250,7 +261,7 @@ action:
       avg_price: "{{ filtered_data.avg }}"
       profit_price_limit: "{{ avg_price * (1 - (min_profit_margin / 100)) }}"
 
-      # --- 3. ZON & DOEL ---
+      # --- 4. ZON & DOEL ---
       forecast_tomorrow_val: "{{ states(solar_forecast_tomorrow) | float(0) }}"
       relevant_solar: >-
         {% if now().hour >= 14 %} {{ forecast_tomorrow_val }}
@@ -261,7 +272,7 @@ action:
         {% else %} {{ target_soc_winter }}
         {% endif %}
 
-      # --- 4. UREN BEREKENEN ---
+      # --- 5. UREN BEREKENEN ---
       hours_calc: >-
         {% set soc_deficit = dynamic_target_soc - current_soc %}
         {% if soc_deficit > 0 %}
@@ -275,7 +286,7 @@ action:
       hours_strict: "{{ hours_calc.strict }}"
       hours_safe: "{{ hours_calc.safe }}"
 
-      # --- 5. DREMPELS ---
+      # --- 6. DREMPELS ---
       threshold_strict: >-
         {% if sorted_prices | length > 0 and hours_strict > 0 %}
            {% set idx = (hours_strict - 1) if (hours_strict - 1) < sorted_prices|length else (sorted_prices|length - 1) %}
