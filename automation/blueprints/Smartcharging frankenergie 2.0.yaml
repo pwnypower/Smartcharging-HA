@@ -1,14 +1,19 @@
 blueprint:
-  name: Frank Energie - V9 (Day-Ahead Solar)
+  name: Frank Energie - V10 (Met Uitleg)
   description: >
-    De meest complete versie.
-    - Kijkt naar prijzen van vandaag én morgen.
-    - Kijkt in de avond alvast naar de ZON van morgen (om ruimte vrij te houden).
-    - Hybride strategie: Alleen strikt noodzakelijk laden bij hoge prijzen, extra bufferen bij lage prijzen.
+    Slim laden voor Frank Energie.
+    
+    Deze automatisering probeert de perfecte balans te vinden tussen:
+    1. Goedkoop laden (prijzen laag).
+    2. Ruimte vrijhouden voor gratis zon (zomermodus).
+    3. Genoeg lading hebben voor de dure piekuren (wintermodus).
+    
+    Het script kijkt naar de prijzen van vandaag én morgen, en past de laadstrategie aan op basis van de zonvoorspelling.
   domain: automation
   input:
     battery_reserve_switch:
       name: Reserve mode switch
+      description: De schakelaar die het laden vanaf het net forceert (bijv. 'Force Charge' of 'Reserve Mode').
       selector:
         entity:
           domain: switch
@@ -20,27 +25,66 @@ blueprint:
           device_class: battery
     frank_price_sensor:
       name: Frank Energie prijs sensor
+      description: De sensor die de toekomstige prijzen bevat (attribuut 'prices').
       selector:
         entity:
           domain: sensor
 
-    # --- ZON VOORSPELLING (NU MET MORGEN) ---
+    # --- ZON SENSORS ---
     solar_forecast_today:
       name: Zonvoorspelling VANDAAG (kWh)
-      description: bijv. sensor.energy_production_today
+      description: Hoeveel wekt de zon vandaag op? (Wordt overdag gebruikt).
       selector:
         entity:
           domain: sensor
     solar_forecast_tomorrow:
       name: Zonvoorspelling MORGEN (kWh)
-      description: bijv. sensor.energy_production_tomorrow
+      description: Hoeveel wekt de zon morgen op? (Wordt in de avond/nacht gebruikt voor planning).
       selector:
         entity:
           domain: sensor
 
-    # --- CONFIGURATIE ---
+    # --- SEIZOENSMANAGEMENT (DE UITLEG) ---
+    summer_solar_threshold:
+      name: Omschakelpunt Zomer/Winter (kWh)
+      description: >
+        Boven hoeveel kWh zonopbrengst beschouw je de dag als 'zonnig'?
+        Hierboven gebruikt hij het Zomer Doel (ruimte vrijhouden).
+        Hieronder gebruikt hij het Winter Doel (volgooien).
+        Advies: 10-15 kWh.
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "kWh"
+
+    target_soc_winter:
+      name: Doel SoC Winter / Donkere dag (%)
+      description: >
+        WAAROM: Op donkere dagen wil je de batterij 's nachts goedkoop volladen, omdat de zon het overdag niet gaat redden. Zo vermijd je dure stroom in de avondpiek.
+        ADVIES: Zet dit hoog (80% - 100%).
+      default: 90
+      selector:
+        number:
+          min: 10
+          max: 100
+
+    target_soc_summer:
+      name: Doel SoC Zomer / Zonnige dag (%)
+      description: >
+        WAAROM: Als de zon morgen fel schijnt, is het zonde als je batterij al vol zit met netstroom. Je wilt ruimte vrijhouden voor gratis zonne-energie. Laad 's nachts alleen genoeg om de ochtend (tot zonsopkomst) te overleven.
+        ADVIES: Zet dit laag (20% - 40%).
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 100
+
+    # --- SYSTEEM CONFIGURATIE ---
     battery_capacity_kwh:
       name: Batterij Capaciteit (kWh)
+      description: Totale grootte van je batterij. Nodig om te berekenen hoe lang het laden duurt.
       default: 10
       selector:
         number:
@@ -50,6 +94,7 @@ blueprint:
           unit_of_measurement: "kWh"
     charge_power_kw:
       name: Normale Laadsnelheid (kW)
+      description: De snelheid waarmee je systeem laadt.
       default: 3.0
       selector:
         number:
@@ -59,7 +104,11 @@ blueprint:
           unit_of_measurement: "kW"
     safety_factor:
       name: BMS Vertragingsfactor
-      description: 1.0 = exact. 1.5 = 50% extra tijd (alleen bij lage prijs).
+      description: >
+        Soms laadt een batterij traag (koud weer / balanceren).
+        1.0 = Precies berekenen (Risico: batterij komt niet vol).
+        1.5 = 50% extra tijd reserveren (Veilig: stopt vanzelf als hij vol is).
+        Gebruik 2.0 als je vaak last hebt van traag laden (500W).
       default: 1.5
       selector:
         number:
@@ -67,31 +116,10 @@ blueprint:
           max: 4.0
           step: 0.1
 
-    # --- DOELEN ---
-    summer_solar_threshold:
-      name: Zomer Drempel (kWh)
-      description: Boven deze waarde gebruiken we 'Doel Zomer'.
-      default: 15
-      selector:
-        number:
-          min: 0
-          max: 100
-    target_soc_winter:
-      name: Doel SoC Winter/Donker (%)
-      default: 90
-      selector:
-        number:
-          min: 10
-          max: 100
-    target_soc_summer:
-      name: Doel SoC Zomer/Zonnig (%)
-      default: 30
-      selector:
-        number:
-          min: 10
-          max: 100
+    # --- BEVEILIGING ---
     max_price_cap:
       name: Absolute Max Prijs (€)
+      description: Zelfs als de batterij leeg is, NOOIT laden als de prijs hierboven komt.
       default: 0.35
       selector:
         number:
@@ -100,6 +128,7 @@ blueprint:
           step: 0.01
     emergency_soc:
       name: Nood SoC (%)
+      description: Als de batterij hieronder zakt, wordt ALTIJD geladen (tot max prijs). Voorkomt uitval.
       default: 10
       selector:
         number:
@@ -134,8 +163,7 @@ action:
       forecast_today_val: "{{ states(solar_forecast_today) | float(0) }}"
       forecast_tomorrow_val: "{{ states(solar_forecast_tomorrow) | float(0) }}"
       
-      # 1. BEPAAL WELKE ZON WE MOETEN GEBRUIKEN
-      # Na 14:00 kijken we naar de voorspelling van morgen voor de nachtplanning.
+      # LOGICA: Gebruik morgen's voorspelling als het al later op de dag is (na 14u)
       relevant_solar_forecast: >-
         {% if now().hour >= 14 %}
           {{ forecast_tomorrow_val }}
@@ -143,7 +171,7 @@ action:
           {{ forecast_today_val }}
         {% endif %}
       
-      # 2. BEPAAL DOEL SOC
+      # LOGICA: Bepaal doel op basis van die voorspelling
       dynamic_target_soc: >-
         {% if relevant_solar_forecast > summer_solar_threshold %}
           {{ target_soc_summer }}
@@ -151,7 +179,7 @@ action:
           {{ target_soc_winter }}
         {% endif %}
       
-      # 3. UREN BEREKENEN (Strict vs Safe)
+      # BEREKENING: Hoeveel kWh en hoeveel uur hebben we nodig?
       hours_calc: >-
         {% set soc_deficit = dynamic_target_soc - current_soc %}
         {% if soc_deficit > 0 %}
@@ -166,7 +194,7 @@ action:
       hours_strict: "{{ hours_calc.strict }}"
       hours_safe: "{{ hours_calc.safe }}"
 
-      # 4. PRIJZEN ANALYSEREN
+      # PRIJZEN: Haal op en bereken gemiddelde
       price_data: >-
         {% set raw_prices = state_attr(frank_price_sensor, 'prices') %}
         {% set output = namespace(list=[], avg=0) %}
@@ -185,7 +213,7 @@ action:
       sorted_prices: "{{ price_data.list | sort }}"
       avg_price: "{{ price_data.avg }}"
 
-      # 5. DREMPELS BEPALEN
+      # DREMPELS: Bepaal de maximumprijs voor 'strict' en 'safe' laden
       threshold_strict: >-
         {% if sorted_prices | length > 0 and hours_strict > 0 %}
            {% set limit_idx = sorted_prices|length - 1 %}
@@ -207,7 +235,7 @@ action:
         {% endif %}
 
   - choose:
-      # SCENARIO 1: NOOD
+      # SCENARIO 1: NOOD (Batterij bijna leeg)
       - conditions:
           - condition: template
             value_template: "{{ current_soc < emergency_soc }}"
@@ -222,14 +250,17 @@ action:
       - conditions:
           - condition: or
             conditions:
+              # Optie A: Prijs is zo laag dat hij in de 'Strikte' planning valt (Must run)
               - condition: template
                 value_template: "{{ current_price <= threshold_strict }}"
+              # Optie B: Prijs is in de 'Buffer' zone (Safe run) EN lager dan gemiddeld
               - condition: and
                 conditions:
                   - condition: template
                     value_template: "{{ current_price <= threshold_safe }}"
                   - condition: template
                     value_template: "{{ current_price < avg_price }}"
+          # Veiligheidschecks
           - condition: template
             value_template: "{{ current_price < max_price_cap }}"
           - condition: template
@@ -239,7 +270,7 @@ action:
             target:
               entity_id: !input battery_reserve_switch
 
-      # SCENARIO 3: STOPPEN
+      # SCENARIO 3: STOPPEN (Als niet aan bovenstaande wordt voldaan)
       - conditions:
           - condition: template
             value_template: "{{ is_state(battery_reserve_switch, 'on') }}"
