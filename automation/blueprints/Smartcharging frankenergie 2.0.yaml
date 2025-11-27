@@ -1,19 +1,18 @@
 blueprint:
-  name: Frank Energie - V10 (Met Uitleg)
+  name: Frank Energie - V11 (Boost & Rendement)
   description: >
-    Slim laden voor Frank Energie.
+    Slim laden V11.
     
-    Deze automatisering probeert de perfecte balans te vinden tussen:
-    1. Goedkoop laden (prijzen laag).
-    2. Ruimte vrijhouden voor gratis zon (zomermodus).
-    3. Genoeg lading hebben voor de dure piekuren (wintermodus).
-    
-    Het script kijkt naar de prijzen van vandaag én morgen, en past de laadstrategie aan op basis van de zonvoorspelling.
+    NIEUW:
+    - Boost Modus: Dwing laden af via een knop.
+    - Rendementscheck: Laad buffer-uren alleen als het prijsverschil groot genoeg is (percentage).
+    - Notificaties: Krijg een berichtje als het laden start.
   domain: automation
   input:
+    # --- BASIS ENTITEITEN ---
     battery_reserve_switch:
       name: Reserve mode switch
-      description: De schakelaar die het laden vanaf het net forceert (bijv. 'Force Charge' of 'Reserve Mode').
+      description: De schakelaar die laden start.
       selector:
         entity:
           domain: switch
@@ -25,33 +24,42 @@ blueprint:
           device_class: battery
     frank_price_sensor:
       name: Frank Energie prijs sensor
-      description: De sensor die de toekomstige prijzen bevat (attribuut 'prices').
       selector:
         entity:
           domain: sensor
 
-    # --- ZON SENSORS ---
+    # --- NIEUW: BOOST KNOP ---
+    boost_switch:
+      name: Boost Schakelaar (Optioneel)
+      description: Een input_boolean. Als deze AAN staat, wordt er direct geladen (negeert alles).
+      default: []
+      selector:
+        entity:
+          domain: input_boolean
+          multiple: false
+
+    # --- NIEUW: NOTIFICATIES ---
+    notify_device:
+      name: Telefoon voor notificaties (Optioneel)
+      description: Selecteer je telefoon. Je krijgt een bericht als het laden START.
+      default: []
+      selector:
+        device:
+          integration: mobile_app
+
+    # --- ZON & VOORSPELLING ---
     solar_forecast_today:
       name: Zonvoorspelling VANDAAG (kWh)
-      description: Hoeveel wekt de zon vandaag op? (Wordt overdag gebruikt).
       selector:
         entity:
           domain: sensor
     solar_forecast_tomorrow:
       name: Zonvoorspelling MORGEN (kWh)
-      description: Hoeveel wekt de zon morgen op? (Wordt in de avond/nacht gebruikt voor planning).
       selector:
         entity:
           domain: sensor
-
-    # --- SEIZOENSMANAGEMENT (DE UITLEG) ---
     summer_solar_threshold:
       name: Omschakelpunt Zomer/Winter (kWh)
-      description: >
-        Boven hoeveel kWh zonopbrengst beschouw je de dag als 'zonnig'?
-        Hierboven gebruikt hij het Zomer Doel (ruimte vrijhouden).
-        Hieronder gebruikt hij het Winter Doel (volgooien).
-        Advies: 10-15 kWh.
       default: 15
       selector:
         number:
@@ -59,67 +67,62 @@ blueprint:
           max: 100
           unit_of_measurement: "kWh"
 
-    target_soc_winter:
-      name: Doel SoC Winter / Donkere dag (%)
+    # --- RENDEMENT & MARGES (NIEUW) ---
+    min_profit_margin:
+      name: Minimaal Rendement (%)
       description: >
-        WAAROM: Op donkere dagen wil je de batterij 's nachts goedkoop volladen, omdat de zon het overdag niet gaat redden. Zo vermijd je dure stroom in de avondpiek.
-        ADVIES: Zet dit hoog (80% - 100%).
+        Hoeveel procent moet de prijs lager zijn dan het gemiddelde om 'extra' buffer-uren te laden?
+        Dit compenseert laadverliezen. Bijv. 20%.
+        Als prijs €0,25 is en gemiddelde €0,30 -> (0,30 - 20%) = 0,24. Dan laden we NIET (te duur).
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 50
+          unit_of_measurement: "%"
+    
+    # --- DOELEN & CAPACITEIT ---
+    target_soc_winter:
+      name: Doel SoC Winter (%)
       default: 90
       selector:
         number:
           min: 10
           max: 100
-
     target_soc_summer:
-      name: Doel SoC Zomer / Zonnige dag (%)
-      description: >
-        WAAROM: Als de zon morgen fel schijnt, is het zonde als je batterij al vol zit met netstroom. Je wilt ruimte vrijhouden voor gratis zonne-energie. Laad 's nachts alleen genoeg om de ochtend (tot zonsopkomst) te overleven.
-        ADVIES: Zet dit laag (20% - 40%).
+      name: Doel SoC Zomer (%)
       default: 30
       selector:
         number:
           min: 10
           max: 100
-
-    # --- SYSTEEM CONFIGURATIE ---
     battery_capacity_kwh:
       name: Batterij Capaciteit (kWh)
-      description: Totale grootte van je batterij. Nodig om te berekenen hoe lang het laden duurt.
       default: 10
       selector:
         number:
           min: 1
           max: 100
           step: 0.1
-          unit_of_measurement: "kWh"
     charge_power_kw:
       name: Normale Laadsnelheid (kW)
-      description: De snelheid waarmee je systeem laadt.
       default: 3.0
       selector:
         number:
           min: 0.1
           max: 22
           step: 0.1
-          unit_of_measurement: "kW"
     safety_factor:
       name: BMS Vertragingsfactor
-      description: >
-        Soms laadt een batterij traag (koud weer / balanceren).
-        1.0 = Precies berekenen (Risico: batterij komt niet vol).
-        1.5 = 50% extra tijd reserveren (Veilig: stopt vanzelf als hij vol is).
-        Gebruik 2.0 als je vaak last hebt van traag laden (500W).
+      description: 1.5 = 50% extra tijd reserveren voor trage batterijen.
       default: 1.5
       selector:
         number:
           min: 1.0
           max: 4.0
           step: 0.1
-
-    # --- BEVEILIGING ---
     max_price_cap:
       name: Absolute Max Prijs (€)
-      description: Zelfs als de batterij leeg is, NOOIT laden als de prijs hierboven komt.
       default: 0.35
       selector:
         number:
@@ -128,7 +131,6 @@ blueprint:
           step: 0.01
     emergency_soc:
       name: Nood SoC (%)
-      description: Als de batterij hieronder zakt, wordt ALTIJD geladen (tot max prijs). Voorkomt uitval.
       default: 10
       selector:
         number:
@@ -139,47 +141,50 @@ variables:
   battery_reserve_switch: !input battery_reserve_switch
   battery_soc_sensor: !input battery_soc_sensor
   frank_price_sensor: !input frank_price_sensor
+  boost_switch: !input boost_switch
+  notify_device: !input notify_device
+  # Inputs
   solar_forecast_today: !input solar_forecast_today
   solar_forecast_tomorrow: !input solar_forecast_tomorrow
   summer_solar_threshold: !input summer_solar_threshold
+  min_profit_margin: !input min_profit_margin
   target_soc_winter: !input target_soc_winter
   target_soc_summer: !input target_soc_summer
-  max_price_cap: !input max_price_cap
-  emergency_soc: !input emergency_soc
   battery_capacity_kwh: !input battery_capacity_kwh
   charge_power_kw: !input charge_power_kw
   safety_factor: !input safety_factor
+  max_price_cap: !input max_price_cap
+  emergency_soc: !input emergency_soc
 
 trigger:
   - platform: time_pattern
     minutes: "/5"
   - platform: state
     entity_id: !input frank_price_sensor
+  # Trigger ook direct als de Boost knop omgaat
+  - platform: state
+    entity_id: !input boost_switch
+    to: "on"
 
 action:
   - variables:
       current_soc: "{{ states(battery_soc_sensor) | float(0) }}"
       current_price: "{{ states(frank_price_sensor) | float(0) }}"
-      forecast_today_val: "{{ states(solar_forecast_today) | float(0) }}"
+      is_boost_active: "{{ boost_switch != [] and is_state(boost_switch, 'on') }}"
+      
+      # LOGICA 1: Zon & Doel
       forecast_tomorrow_val: "{{ states(solar_forecast_tomorrow) | float(0) }}"
-      
-      # LOGICA: Gebruik morgen's voorspelling als het al later op de dag is (na 14u)
-      relevant_solar_forecast: >-
-        {% if now().hour >= 14 %}
-          {{ forecast_tomorrow_val }}
-        {% else %}
-          {{ forecast_today_val }}
+      relevant_solar: >-
+        {% if now().hour >= 14 %} {{ forecast_tomorrow_val }}
+        {% else %} {{ states(solar_forecast_today) | float(0) }}
         {% endif %}
       
-      # LOGICA: Bepaal doel op basis van die voorspelling
       dynamic_target_soc: >-
-        {% if relevant_solar_forecast > summer_solar_threshold %}
-          {{ target_soc_summer }}
-        {% else %}
-          {{ target_soc_winter }}
+        {% if relevant_solar > summer_solar_threshold %} {{ target_soc_summer }}
+        {% else %} {{ target_soc_winter }}
         {% endif %}
-      
-      # BEREKENING: Hoeveel kWh en hoeveel uur hebben we nodig?
+
+      # LOGICA 2: Uren Berekenen
       hours_calc: >-
         {% set soc_deficit = dynamic_target_soc - current_soc %}
         {% if soc_deficit > 0 %}
@@ -190,11 +195,10 @@ action:
         {% else %}
            {"strict": 0, "safe": 0}
         {% endif %}
-
       hours_strict: "{{ hours_calc.strict }}"
       hours_safe: "{{ hours_calc.safe }}"
 
-      # PRIJZEN: Haal op en bereken gemiddelde
+      # LOGICA 3: Prijzen & Gemiddelde
       price_data: >-
         {% set raw_prices = state_attr(frank_price_sensor, 'prices') %}
         {% set output = namespace(list=[], avg=0) %}
@@ -209,68 +213,121 @@ action:
           {% set output.avg = (output.list | sum / output.list | length) %}
         {% endif %}
         {"list": {{ output.list }}, "avg": {{ output.avg }}}
-
+      
       sorted_prices: "{{ price_data.list | sort }}"
       avg_price: "{{ price_data.avg }}"
 
-      # DREMPELS: Bepaal de maximumprijs voor 'strict' en 'safe' laden
+      # LOGICA 4: Drempels & Rendement
+      # Bereken de maximale prijs waarbij we nog "winst" maken t.o.v. gemiddelde
+      # Formule: Gemiddelde * (1 - marge/100).
+      # Voorbeeld: 0.30 * (1 - 0.20) = 0.24.
+      profit_price_limit: "{{ avg_price * (1 - (min_profit_margin / 100)) }}"
+
+      # Drempel Strict (Must run)
       threshold_strict: >-
         {% if sorted_prices | length > 0 and hours_strict > 0 %}
-           {% set limit_idx = sorted_prices|length - 1 %}
-           {% set target_idx = (hours_strict - 1) %}
-           {% set final_idx = target_idx if target_idx <= limit_idx else limit_idx %}
-           {{ sorted_prices[final_idx] }}
-        {% else %}
-           -999
-        {% endif %}
+           {% set idx = (hours_strict - 1) if (hours_strict - 1) < sorted_prices|length else (sorted_prices|length - 1) %}
+           {{ sorted_prices[idx] }}
+        {% else %} -999 {% endif %}
 
+      # Drempel Safe (Alleen als goedkoop)
       threshold_safe: >-
         {% if sorted_prices | length > 0 and hours_safe > 0 %}
-           {% set limit_idx = sorted_prices|length - 1 %}
-           {% set target_idx = (hours_safe - 1) %}
-           {% set final_idx = target_idx if target_idx <= limit_idx else limit_idx %}
-           {{ sorted_prices[final_idx] }}
-        {% else %}
-           -999
-        {% endif %}
+           {% set idx = (hours_safe - 1) if (hours_safe - 1) < sorted_prices|length else (sorted_prices|length - 1) %}
+           {{ sorted_prices[idx] }}
+        {% else %} -999 {% endif %}
 
   - choose:
-      # SCENARIO 1: NOOD (Batterij bijna leeg)
+      # SCENARIO 1: BOOST MODUS (Handmatig)
+      - conditions:
+          - condition: template
+            value_template: "{{ is_boost_active }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(battery_reserve_switch, 'off') }}"
+            then:
+              - service: switch.turn_on
+                target:
+                  entity_id: !input battery_reserve_switch
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_device != [] }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🚀 Boost geactiveerd! Batterij gaat geforceerd laden."
+
+      # SCENARIO 2: NOOD (Batterij kritiek)
       - conditions:
           - condition: template
             value_template: "{{ current_soc < emergency_soc }}"
           - condition: template
             value_template: "{{ current_price < (max_price_cap * 1.5) }}"
         sequence:
-          - service: switch.turn_on
-            target:
-              entity_id: !input battery_reserve_switch
+          - if:
+              - condition: template
+                value_template: "{{ is_state(battery_reserve_switch, 'off') }}"
+            then:
+              - service: switch.turn_on
+                target:
+                  entity_id: !input battery_reserve_switch
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_device != [] }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "⚠️ Noodlading gestart (SoC < {{ emergency_soc }}%)."
 
-      # SCENARIO 2: SLIM LADEN
+      # SCENARIO 3: SLIM LADEN (Met Rendementscheck)
       - conditions:
           - condition: or
             conditions:
-              # Optie A: Prijs is zo laag dat hij in de 'Strikte' planning valt (Must run)
+              # A: Strikte uren (De goedkoopste uren die we ECHT nodig hebben)
               - condition: template
                 value_template: "{{ current_price <= threshold_strict }}"
-              # Optie B: Prijs is in de 'Buffer' zone (Safe run) EN lager dan gemiddeld
+              
+              # B: Buffer uren (Alleen als prijs lager is dan Winst-limiet)
               - condition: and
                 conditions:
                   - condition: template
                     value_template: "{{ current_price <= threshold_safe }}"
                   - condition: template
-                    value_template: "{{ current_price < avg_price }}"
-          # Veiligheidschecks
+                    # HIER ZIT DE NIEUWE RENDEMENTSCHECK:
+                    value_template: "{{ current_price < profit_price_limit }}"
+          
+          # Algemene checks
           - condition: template
             value_template: "{{ current_price < max_price_cap }}"
           - condition: template
             value_template: "{{ current_soc < dynamic_target_soc }}"
         sequence:
-          - service: switch.turn_on
-            target:
-              entity_id: !input battery_reserve_switch
+          # Alleen Actie ondernemen als hij nog UIT staat (anti-spam)
+          - if:
+              - condition: template
+                value_template: "{{ is_state(battery_reserve_switch, 'off') }}"
+            then:
+              - service: switch.turn_on
+                target:
+                  entity_id: !input battery_reserve_switch
+              # Notificatie
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_device != [] }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: >-
+                      🔋 Slim laden gestart! 
+                      Prijs: €{{ current_price | round(3) }}.
+                      Doel: {{ dynamic_target_soc }}%.
+                      Reden: {{ 'Strikt noodzakelijk' if current_price <= threshold_strict else 'Buffer (Goede prijs)' }}
 
-      # SCENARIO 3: STOPPEN (Als niet aan bovenstaande wordt voldaan)
+      # SCENARIO 4: STOPPEN
       - conditions:
           - condition: template
             value_template: "{{ is_state(battery_reserve_switch, 'on') }}"
