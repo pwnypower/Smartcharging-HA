@@ -1,0 +1,251 @@
+blueprint:
+  name: Frank Energie - V9 (Day-Ahead Solar)
+  description: >
+    De meest complete versie.
+    - Kijkt naar prijzen van vandaag én morgen.
+    - Kijkt in de avond alvast naar de ZON van morgen (om ruimte vrij te houden).
+    - Hybride strategie: Alleen strikt noodzakelijk laden bij hoge prijzen, extra bufferen bij lage prijzen.
+  domain: automation
+  input:
+    battery_reserve_switch:
+      name: Reserve mode switch
+      selector:
+        entity:
+          domain: switch
+    battery_soc_sensor:
+      name: Batterij SoC sensor (%)
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+    frank_price_sensor:
+      name: Frank Energie prijs sensor
+      selector:
+        entity:
+          domain: sensor
+
+    # --- ZON VOORSPELLING (NU MET MORGEN) ---
+    solar_forecast_today:
+      name: Zonvoorspelling VANDAAG (kWh)
+      description: bijv. sensor.energy_production_today
+      selector:
+        entity:
+          domain: sensor
+    solar_forecast_tomorrow:
+      name: Zonvoorspelling MORGEN (kWh)
+      description: bijv. sensor.energy_production_tomorrow
+      selector:
+        entity:
+          domain: sensor
+
+    # --- CONFIGURATIE ---
+    battery_capacity_kwh:
+      name: Batterij Capaciteit (kWh)
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 0.1
+          unit_of_measurement: "kWh"
+    charge_power_kw:
+      name: Normale Laadsnelheid (kW)
+      default: 3.0
+      selector:
+        number:
+          min: 0.1
+          max: 22
+          step: 0.1
+          unit_of_measurement: "kW"
+    safety_factor:
+      name: BMS Vertragingsfactor
+      description: 1.0 = exact. 1.5 = 50% extra tijd (alleen bij lage prijs).
+      default: 1.5
+      selector:
+        number:
+          min: 1.0
+          max: 4.0
+          step: 0.1
+
+    # --- DOELEN ---
+    summer_solar_threshold:
+      name: Zomer Drempel (kWh)
+      description: Boven deze waarde gebruiken we 'Doel Zomer'.
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 100
+    target_soc_winter:
+      name: Doel SoC Winter/Donker (%)
+      default: 90
+      selector:
+        number:
+          min: 10
+          max: 100
+    target_soc_summer:
+      name: Doel SoC Zomer/Zonnig (%)
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 100
+    max_price_cap:
+      name: Absolute Max Prijs (€)
+      default: 0.35
+      selector:
+        number:
+          min: 0
+          max: 2.0
+          step: 0.01
+    emergency_soc:
+      name: Nood SoC (%)
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 100
+
+variables:
+  battery_reserve_switch: !input battery_reserve_switch
+  battery_soc_sensor: !input battery_soc_sensor
+  frank_price_sensor: !input frank_price_sensor
+  solar_forecast_today: !input solar_forecast_today
+  solar_forecast_tomorrow: !input solar_forecast_tomorrow
+  summer_solar_threshold: !input summer_solar_threshold
+  target_soc_winter: !input target_soc_winter
+  target_soc_summer: !input target_soc_summer
+  max_price_cap: !input max_price_cap
+  emergency_soc: !input emergency_soc
+  battery_capacity_kwh: !input battery_capacity_kwh
+  charge_power_kw: !input charge_power_kw
+  safety_factor: !input safety_factor
+
+trigger:
+  - platform: time_pattern
+    minutes: "/5"
+  - platform: state
+    entity_id: !input frank_price_sensor
+
+action:
+  - variables:
+      current_soc: "{{ states(battery_soc_sensor) | float(0) }}"
+      current_price: "{{ states(frank_price_sensor) | float(0) }}"
+      forecast_today_val: "{{ states(solar_forecast_today) | float(0) }}"
+      forecast_tomorrow_val: "{{ states(solar_forecast_tomorrow) | float(0) }}"
+      
+      # 1. BEPAAL WELKE ZON WE MOETEN GEBRUIKEN
+      # Na 14:00 kijken we naar de voorspelling van morgen voor de nachtplanning.
+      relevant_solar_forecast: >-
+        {% if now().hour >= 14 %}
+          {{ forecast_tomorrow_val }}
+        {% else %}
+          {{ forecast_today_val }}
+        {% endif %}
+      
+      # 2. BEPAAL DOEL SOC
+      dynamic_target_soc: >-
+        {% if relevant_solar_forecast > summer_solar_threshold %}
+          {{ target_soc_summer }}
+        {% else %}
+          {{ target_soc_winter }}
+        {% endif %}
+      
+      # 3. UREN BEREKENEN (Strict vs Safe)
+      hours_calc: >-
+        {% set soc_deficit = dynamic_target_soc - current_soc %}
+        {% if soc_deficit > 0 %}
+           {% set kwh_needed = (soc_deficit / 100.0) * battery_capacity_kwh %}
+           {% set strict = (kwh_needed / charge_power_kw) | round(0, 'ceil') | int %}
+           {% set safe = (strict * safety_factor) | round(0, 'ceil') | int %}
+           {"strict": {{ strict }}, "safe": {{ safe }}}
+        {% else %}
+           {"strict": 0, "safe": 0}
+        {% endif %}
+
+      hours_strict: "{{ hours_calc.strict }}"
+      hours_safe: "{{ hours_calc.safe }}"
+
+      # 4. PRIJZEN ANALYSEREN
+      price_data: >-
+        {% set raw_prices = state_attr(frank_price_sensor, 'prices') %}
+        {% set output = namespace(list=[], avg=0) %}
+        {% if raw_prices %}
+           {% set text = raw_prices | string %}
+           {% set matches = text | regex_findall("from_hour': (\\d+).*?price': ([0-9.]+)") %}
+           {% for m in matches %}
+              {% set output.list = output.list + [m[1]|float] %}
+           {% endfor %}
+        {% endif %}
+        {% if output.list | length > 0 %}
+          {% set output.avg = (output.list | sum / output.list | length) %}
+        {% endif %}
+        {"list": {{ output.list }}, "avg": {{ output.avg }}}
+
+      sorted_prices: "{{ price_data.list | sort }}"
+      avg_price: "{{ price_data.avg }}"
+
+      # 5. DREMPELS BEPALEN
+      threshold_strict: >-
+        {% if sorted_prices | length > 0 and hours_strict > 0 %}
+           {% set limit_idx = sorted_prices|length - 1 %}
+           {% set target_idx = (hours_strict - 1) %}
+           {% set final_idx = target_idx if target_idx <= limit_idx else limit_idx %}
+           {{ sorted_prices[final_idx] }}
+        {% else %}
+           -999
+        {% endif %}
+
+      threshold_safe: >-
+        {% if sorted_prices | length > 0 and hours_safe > 0 %}
+           {% set limit_idx = sorted_prices|length - 1 %}
+           {% set target_idx = (hours_safe - 1) %}
+           {% set final_idx = target_idx if target_idx <= limit_idx else limit_idx %}
+           {{ sorted_prices[final_idx] }}
+        {% else %}
+           -999
+        {% endif %}
+
+  - choose:
+      # SCENARIO 1: NOOD
+      - conditions:
+          - condition: template
+            value_template: "{{ current_soc < emergency_soc }}"
+          - condition: template
+            value_template: "{{ current_price < (max_price_cap * 1.5) }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input battery_reserve_switch
+
+      # SCENARIO 2: SLIM LADEN
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ current_price <= threshold_strict }}"
+              - condition: and
+                conditions:
+                  - condition: template
+                    value_template: "{{ current_price <= threshold_safe }}"
+                  - condition: template
+                    value_template: "{{ current_price < avg_price }}"
+          - condition: template
+            value_template: "{{ current_price < max_price_cap }}"
+          - condition: template
+            value_template: "{{ current_soc < dynamic_target_soc }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input battery_reserve_switch
+
+      # SCENARIO 3: STOPPEN
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(battery_reserve_switch, 'on') }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input battery_reserve_switch
+
+mode: single
