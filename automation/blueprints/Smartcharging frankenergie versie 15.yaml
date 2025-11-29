@@ -1,20 +1,20 @@
 blueprint:
-  name: "Frank Energie - V37 (Real Trading Logic)"
+  name: "Frank Energie - V38 (Price Spike Protection)"
   description: >
-    De ultieme "Trader".
+    De veiligste en slimste versie.
     
-    WERKING:
-    1. Onthoudt de EXACTE prijs waarvoor je geladen hebt in een Helper.
-    2. Houdt de batterij vast (Reserve Mode AAN) zolang de prijs niet interessant genoeg is.
-    3. Geeft de batterij pas vrij (Reserve Mode UIT) als: Huidige Prijs > (Inkoopprijs + Winstmarge).
+    CRUCIALE FIX:
+    - Lost het "uurwissel-probleem" op.
+    - Normaal beschermt de timer (30 min) de hardware.
+    - MAAR: Als de prijs plotseling stijgt (bijv. om 15:00), wordt de timer genegeerd en stopt hij DIRECT.
     
-    VEREISTE: Je moet een 'input_number' helper aanmaken voor het geheugen.
+    STANDAARD:
+    - Ochtend Garantie, Trading Logic, Boost, Rapportage.
   domain: automation
   input:
-    # --- GEHEUGEN (NIEUW) ---
+    # --- GEHEUGEN ---
     last_price_helper:
       name: "Helper: Laatste Laadprijs"
-      description: "Selecteer de input_number die je hebt aangemaakt. Hierin slaat hij de inkoopprijs op."
       selector:
         entity:
           domain: input_number
@@ -22,7 +22,6 @@ blueprint:
     # --- RENDEMENT ---
     min_profit_margin:
       name: "Minimale Winstmarge (%)"
-      description: "Je ontlaadt pas als de prijs X% hoger is dan je opgeslagen laadprijs."
       default: 20
       selector:
         number:
@@ -43,7 +42,6 @@ blueprint:
         time:
     notify_service_name:
       name: "Notificatie Service"
-      description: "Bijv: notify.mobile_app_jouw_naam"
       default: ""
       selector:
         text:
@@ -246,15 +244,12 @@ action:
         {% set ne = night_end.split(':')[0] | int %}
         {% set ds = day_start.split(':')[0] | int %}
         {% set de = day_end.split(':')[0] | int %}
-        
         {% if ns > ne %} {% set night_active = (now_h >= ns or now_h < ne) %}
         {% else %}       {% set night_active = (now_h >= ns and now_h < ne) %}
         {% endif %}
-        
         {% if ds > de %} {% set day_active = (now_h >= ds or now_h < de) %}
         {% else %}       {% set day_active = (now_h >= ds and now_h < de) %}
         {% endif %}
-        
         {{ night_active or day_active }}
       
       is_night_now: >-
@@ -295,7 +290,7 @@ action:
 
       # --- 3. FILTEREN ---
       filtered_data: >-
-        {% set output = namespace(price_list=[], slot_data=[], night_prices=[]) %}
+        {% set output = namespace(price_list=[], avg=0, slot_data=[], global_sum=0, global_count=0, night_prices=[]) %}
         {% set now_ts = as_timestamp(now()) %}
         {% set history_cutoff = now_ts - 3600 %}
         
@@ -310,6 +305,9 @@ action:
               {% set p_ts = item.ts %}
               
               {% if p_ts >= history_cutoff %}
+                  {% set output.global_sum = output.global_sum + item.price %}
+                  {% set output.global_count = output.global_count + 1 %}
+
                   {% set in_night = false %}
                   {% if ns > ne %} {% set in_night = (p_hour >= ns or p_hour < ne) %}
                   {% else %}       {% set in_night = (p_hour >= ns and p_hour < ne) %}
@@ -320,13 +318,11 @@ action:
                   {% else %}       {% set in_day = (p_hour >= ds and p_hour < de) %}
                   {% endif %}
 
-                  {# Als het in een geldig slot valt (Nacht OF Middag) #}
                   {% if in_night or in_day %}
                      {% set output.price_list = output.price_list + [item.price] %}
                      {% set output.slot_data = output.slot_data + [item] %}
                   {% endif %}
                   
-                  {# Alleen nachtprijzen (voor Ochtend Garantie) #}
                   {% if in_night %}
                      {% set output.night_prices = output.night_prices + [item.price] %}
                   {% endif %}
@@ -334,15 +330,20 @@ action:
            {% endfor %}
         {% endif %}
         
-        {"all": {{ output.price_list }}, "night": {{ output.night_prices }}, "slot_data": {{ output.slot_data }}}
+        {% set global_avg = 999.0 %}
+        {% if output.global_count > 0 %}
+           {% set global_avg = output.global_sum / output.global_count %}
+        {% endif %}
+
+        {"all": {{ output.price_list }}, "night": {{ output.night_prices }}, "global_avg": {{ global_avg }}, "slot_data": {{ output.slot_data }}}
 
       # Variabelen
       sorted_all: "{{ filtered_data.all | sort }}"
       sorted_night: "{{ filtered_data.night | sort }}"
       
-      # --- TRADING LOGICA ---
-      # We gebruiken de OPGESLAGEN prijs + Marge als ontlaad-drempel
-      # Als de huidige prijs lager is dan dit, houden we vast (Switch AAN)
+      # LOGICA VARIABELEN
+      avg_price_day: "{{ filtered_data.global_avg }}"
+      # Inkoopprijs die we onthouden hebben + marge
       holding_limit: "{{ stored_price * (1 + (min_profit_margin / 100)) }}"
 
       # --- 4. ZON & DOEL ---
@@ -498,8 +499,7 @@ action:
                 target:
                   entity_id: !input battery_reserve_switch
               
-              # SLA DE INKOOPPRIJS OP (Alleen als we écht aan het laden zijn, niet alleen vasthouden)
-              # We doen dit door te checken of we in een 'Laad-trigger' zitten (A of B)
+              # INKOOPPRIJS OPSLAAN (Alleen bij laden)
               - if:
                   - condition: or
                     conditions:
@@ -514,32 +514,47 @@ action:
                     data:
                       value: "{{ current_price }}"
               
-              # Melding
               - service: !input notify_service_name
                 data:
                   message: >-
                     🔋 Laden/Hold actief. Prijs: €{{ current_price | round(3) }}
 
       # --- STOPPEN (VERKOOP / GEBRUIK) ---
-      # Dit gebeurt als de prijs HOGER is dan de holding_limit
       - conditions:
           - condition: template
             value_template: "{{ is_state(battery_reserve_switch, 'on') }}"
         sequence:
+          # MAG UIT ALS:
+          # 1. Hij staat > 30 min aan (Normale rust)
+          # 2. OF Batterij is VOL (Mag altijd uit)
+          # 3. OF Prijs is hoger dan limiet (PRICE SPIKE PROTECTION) -> Geld gaat voor hardware
           - if:
-              - condition: template
-                value_template: >-
-                  {% if states[battery_reserve_switch].last_changed %}
-                    {{ (as_timestamp(now()) - as_timestamp(states[battery_reserve_switch].last_changed)) > 1800 }}
-                  {% else %} true {% endif %}
+              - condition: or
+                conditions:
+                  # Timer Check
+                  - condition: template
+                    value_template: >-
+                      {% if states[battery_reserve_switch].last_changed %}
+                        {{ (as_timestamp(now()) - as_timestamp(states[battery_reserve_switch].last_changed)) > 1800 }}
+                      {% else %} true {% endif %}
+                  # Battery Full Check
+                  - condition: template
+                    value_template: "{{ current_soc >= dynamic_target_soc }}"
+                  # Price Spike Check (NIEUW)
+                  - condition: template
+                    value_template: "{{ current_price > holding_limit }}"
             then:
               - service: switch.turn_off
                 target:
                   entity_id: !input battery_reserve_switch
-              - service: !input notify_service_name
-                data:
-                  message: >-
-                    💰 Winst pakken! Prijs (€{{ current_price }}) is hoog genoeg. Ontladen gestart.
+              # Stuur alleen bericht bij price spike
+              - if:
+                  - condition: template
+                    value_template: "{{ current_price > holding_limit }}"
+                then:
+                  - service: !input notify_service_name
+                    data:
+                      message: >-
+                        💰 Winst pakken! Prijs (€{{ current_price }}) is hoog genoeg. Ontladen gestart.
 
 mode: single
-
