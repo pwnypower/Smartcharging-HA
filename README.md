@@ -1,6 +1,5 @@
 # 🔋 Frank Energie - Smart Battery Manager
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/pwnypower)
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=LINK_TO_YOUR_GITHUB_YAML_FILE)
 
 **The ultimate "Set & Forget" automation for home batteries with dynamic energy tariffs.**
