@@ -1,10 +1,10 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager (V1.6.3)"
+  name: "Frank Energie - Smart Battery Manager (V1.6.4)"
   description: >
-    **Production Release V1.6.3 - Final Syntax Fix**
+    **Production Release V1.6.4 - Syntax Fix**
     
-    CHANGE LOG V1.6.3:
-    - FIX: Removed invalid min/max constraints from entity selector. Blueprint now loads correctly.
+    CHANGE LOG V1.6.4:
+    - FIX: Removed invalid recursive input definition causing import errors.
     - LOGIC: Smart Hold compares Grid Price vs. Stored Price.
     
     LOGIC OVERVIEW:
@@ -211,7 +211,6 @@ blueprint:
           min: 0
           max: 100
           unit_of_measurement: "%"
-    language: !input language
 
 variables:
   # Inputs
