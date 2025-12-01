@@ -1,18 +1,16 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager (V1.6.2)"
+  name: "Frank Energie - Smart Battery Manager (V1.6.3)"
   description: >
-    **Production Release V1.6.2 - Financial Logic Fix**
+    **Production Release V1.6.3 - Final Syntax Fix**
     
-    CHANGE LOG V1.6.2:
-    - FIX: Selector error (removed invalid min/max keys).
-    - LOGIC UPDATE: "Smart Hold" now looks at financial value instead of just SoC.
-      If Grid Price < Last Purchase Price -> HOLD (Use cheap grid, save expensive battery).
-      If Grid Price > Last Purchase Price -> DISCHARGE (Use cheap battery).
+    CHANGE LOG V1.6.3:
+    - FIX: Removed invalid min/max constraints from entity selector. Blueprint now loads correctly.
+    - LOGIC: Smart Hold compares Grid Price vs. Stored Price.
     
-    LOGIC:
-    1. CHARGE: Price Cheap -> Switch ON, Target = High.
-    2. HOLD: Price < Purchase Price -> Switch ON, Target = Current (Use Grid).
-    3. DISCHARGE: Price > Purchase Price OR Profit Take -> Switch OFF (Use Battery).
+    LOGIC OVERVIEW:
+    1. CHARGE: Price Cheap -> Switch ON, Target SoC = High (Winter/Summer setting).
+    2. HOLD: Price Medium (but < Stored Price) -> Switch ON, Target SoC = Current SoC (Use Grid, Keep Battery).
+    3. DISCHARGE: Price High (or > Stored Price) -> Switch OFF (Use Battery).
     
     **Supported Languages:** English, Nederlands.
   domain: automation
@@ -57,7 +55,7 @@ blueprint:
           domain: switch
     target_soc_number:
       name: "Number: Target SoC (Inverter)"
-      description: "The entity that controls the max charge % on the inverter."
+      description: "The entity on your inverter that sets the max charge % (e.g. number.victron_min_soc)."
       selector:
         entity:
           domain: number
@@ -77,7 +75,7 @@ blueprint:
     # --- MEMORY ---
     last_price_helper:
       name: "Helper: Last Purchase Price"
-      description: "MUST BE SET: Input Number that stores the price you last charged at."
+      description: "Required: Input Number that stores the price you last charged at."
       selector:
         entity:
           domain: input_number
@@ -313,7 +311,7 @@ action:
         {% endfor %}
         {{ ns.price }}
 
-      # 3. FILTERING & AVERAGES
+      # 3. FILTERING
       filtered_data: >-
         {% set output = namespace(price_list=[], avg=0, slot_data=[], global_sum=0, global_count=0, night_prices=[]) %}
         {% set history_cutoff = as_timestamp(now()) - 3600 %}
@@ -364,7 +362,7 @@ action:
         {% if stored_price > 0 %} {{ stored_price * (1 + (current_profit_margin / 100)) }}
         {% else %} {{ target_price * (1 + (current_profit_margin / 100)) }} {% endif %}
 
-      # 5. THRESHOLDS & DECISIONS
+      # 5. THRESHOLDS
       hours_calc: >-
         {% set def_m = target_soc_morning_min - current_soc %}
         {% set h_m = ((def_m/100*battery_capacity_kwh/charge_power_kw)*safety_factor)|round(0,'ceil')|int if def_m > 0 else 0 %}
@@ -396,10 +394,7 @@ action:
       should_profit_take: "{{ target_price > holding_limit }}"
       
       # SMART HOLD:
-      # If we are NOT charging, AND NOT taking profit:
-      # We hold IF the Grid Price is LOWER than our Purchase Price (stored_price).
-      # If Grid is cheaper than Stored: Use Grid (Hold).
-      # If Grid is more expensive than Stored: Use Battery (Discharge/Continue).
+      # Use Grid (Hold) IF: Grid Price < Stored Price (and not taking profit/charging).
       should_hold: >-
         {% if not should_charge and not should_profit_take and is_in_slot %}
            {% if stored_price > 0 %}
@@ -479,6 +474,7 @@ action:
             target:
               entity_id: !input battery_reserve_switch
           
+          # Force Inverter Target to Winter/Summer Target (only if different)
           - if:
               - condition: template
                 value_template: "{{ abs(states(target_soc_number)|float(0) - dynamic_target_soc) > 1 }}"
@@ -513,7 +509,8 @@ action:
             target:
               entity_id: !input battery_reserve_switch
           
-          # Only clamp Target SoC if Inverter Target > Current SoC (Prevent Grid Charge)
+          # Force Inverter Target to CURRENT SoC (Stop Grid Charge, Prevent Discharge)
+          # Only update if Target > Current + 1 (Grid charge protection)
           - if:
               - condition: template
                 value_template: "{{ states(target_soc_number)|float(0) > (current_soc + 1) }}"
