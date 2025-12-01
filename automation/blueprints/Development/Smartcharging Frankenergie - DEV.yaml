@@ -1,12 +1,14 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.4.4 (Language Fix)"
+  name: "Frank Energie - Smart Battery Manager v1.4.5 (Syntax Fix)"
   description: >
-    **Fix v1.4.4:** Fixed logic bug where daytime hours were labeled as 'Morning' in the report. Added Language Selector.
+    **Fix v1.4.5:**
+    - Opgelost: TemplateSyntaxError (unexpected char '!') bij Boost trigger.
+    - Opgelost: 'Morning' label in rapportage verschijnt nu alleen écht 's nachts.
     
-    STRATEGY:
-    - Weighted Peak Analysis & Profit Margins.
-    - Morning Guarantee (Night only).
-    - Smart Hold & Switch-Only Discharge.
+    FEATURES:
+    - Multi-language (NL/EN).
+    - Profit Logic & Weighted Peaks.
+    - Hardware Protection.
   domain: automation
   input:
     # --- GENERAL ---
@@ -221,37 +223,9 @@ blueprint:
       selector:
         time:
 
-variables:
-  # Inputs
-  battery_reserve_switch: !input battery_reserve_switch
-  battery_soc_sensor: !input battery_soc_sensor
-  target_soc_number: !input target_soc_number
-  frank_price_sensor: !input frank_price_sensor
-  last_price_helper: !input last_price_helper
-  boost_switch: !input boost_switch
-  notify_device: !input notify_device
-  peak_hours_count: !input peak_hours_count
-  buffer_discount_percentage: !input buffer_discount_percentage
-  min_discharge_margin: !input min_discharge_margin
-  min_base_soc: !input min_base_soc
-  target_soc_morning_min: !input target_soc_morning_min
-  target_soc_winter: !input target_soc_winter
-  target_soc_summer: !input target_soc_summer
-  summer_solar_threshold: !input summer_solar_threshold
-  solar_forecast_today: !input solar_forecast_today
-  solar_forecast_tomorrow: !input solar_forecast_tomorrow
-  battery_capacity_kwh: !input battery_capacity_kwh
-  charge_power_kw: !input charge_power_kw
-  safety_factor: !input safety_factor
-  max_price_cap: !input max_price_cap
-  emergency_soc: !input emergency_soc
-  night_start: !input night_start
-  night_end: !input night_end
-  day_start: !input day_start
-  day_end: !input day_end
-  report_time_evening: !input report_time_evening
-  report_time_morning: !input report_time_morning
-  language: !input language
+# --- FIX: Define Trigger Variables to handle !input safely ---
+trigger_variables:
+  boost_entity: !input boost_switch
 
 trigger:
   - platform: time_pattern
@@ -267,9 +241,9 @@ trigger:
     entity_id: !input frank_price_sensor
     id: "price_change"
   
-  # Boost Trigger
+  # FIX: Use the variable defined above
   - platform: template
-    value_template: "{{ !input boost_switch != [] and is_state(!input boost_switch, 'on') }}"
+    value_template: "{{ boost_entity != [] and is_state(boost_entity, 'on') }}"
     id: "boost"
 
 action:
@@ -277,7 +251,8 @@ action:
       current_soc: "{{ states(battery_soc_sensor) | float(0) }}"
       current_price: "{{ states(frank_price_sensor) | float(0) }}"
       last_paid_price: "{{ states(last_price_helper) | float(0) }}"
-      is_boost_active: "{{ boost_switch != [] and is_state(boost_switch, 'on') }}"
+      # Use variable here too
+      is_boost_active: "{{ boost_entity != [] and is_state(boost_entity, 'on') }}"
       has_notify_device: "{{ notify_device != [] }}"
 
       # --- 1. TIME SLOT LOGIC ---
@@ -287,7 +262,6 @@ action:
       ds: "{{ day_start.split(':')[0] | int }}"
       de: "{{ day_end.split(':')[0] | int }}"
       
-      # Determine if a slot crosses midnight (Start > End)
       night_crosses: "{{ ns > ne }}"
       day_crosses: "{{ ds > de }}"
 
@@ -452,9 +426,9 @@ action:
                       {%- if item.price <= charge_limit_strict %}
                         {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strikt]"] %}
                       {%- elif item.price <= buffer_limit %}
-                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Buffer]"] %}
                       {%- elif is_night_item and item.price < max_price_cap and current_soc < target_soc_morning_min %}
-                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Ochtend)"] %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Ochtend]"] %}
                       {%- endif %}
                     {%- endfor %}
                     {{ ns_list.found | join('\n') if ns_list.found else "Geen." }}
@@ -484,9 +458,9 @@ action:
                       {%- if item.price <= charge_limit_strict %}
                         {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strict]"] %}
                       {%- elif item.price <= buffer_limit %}
-                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Buffer]"] %}
                       {%- elif is_night_item and item.price < max_price_cap and current_soc < target_soc_morning_min %}
-                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Morning)"] %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Morning]"] %}
                       {%- endif %}
                     {%- endfor %}
                     {{ ns_list.found | join('\n') if ns_list.found else "No slots found." }}
