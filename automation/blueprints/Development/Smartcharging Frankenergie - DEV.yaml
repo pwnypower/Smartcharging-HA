@@ -1,7 +1,7 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.4.4 (Report Fix)"
+  name: "Frank Energie - Smart Battery Manager v1.4.4 (Language Fix)"
   description: >
-    **Fix v1.4.4:** Moved Reporting to the highest priority. Prevents other logic (like Smart Hold) from hijacking the report trigger.
+    **Fix v1.4.4:** Fixed logic bug where daytime hours were labeled as 'Morning' in the report. Added Language Selector.
     
     STRATEGY:
     - Weighted Peak Analysis & Profit Margins.
@@ -9,6 +9,19 @@ blueprint:
     - Smart Hold & Switch-Only Discharge.
   domain: automation
   input:
+    # --- GENERAL ---
+    language:
+      name: "Language / Taal"
+      description: "Select the language for notifications."
+      default: "en"
+      selector:
+        select:
+          options:
+            - label: "English"
+              value: "en"
+            - label: "Nederlands"
+              value: "nl"
+
     # --- BASIC ENTITIES ---
     battery_reserve_switch:
       name: "Switch: Force Charge"
@@ -238,6 +251,7 @@ variables:
   day_end: !input day_end
   report_time_evening: !input report_time_evening
   report_time_morning: !input report_time_morning
+  language: !input language
 
 trigger:
   - platform: time_pattern
@@ -252,9 +266,10 @@ trigger:
   - platform: state
     entity_id: !input frank_price_sensor
     id: "price_change"
-  - platform: state
-    entity_id: !input boost_switch
-    to: "on"
+  
+  # Boost Trigger
+  - platform: template
+    value_template: "{{ !input boost_switch != [] and is_state(!input boost_switch, 'on') }}"
     id: "boost"
 
 action:
@@ -272,17 +287,21 @@ action:
       ds: "{{ day_start.split(':')[0] | int }}"
       de: "{{ day_end.split(':')[0] | int }}"
       
+      # Determine if a slot crosses midnight (Start > End)
+      night_crosses: "{{ ns > ne }}"
+      day_crosses: "{{ ds > de }}"
+
       is_night_now: >-
-        {% if ns > ne %} {{ now_h >= ns or now_h < ne }}
-        {% else %}       {{ now_h >= ns and now_h < ne }}
+        {% if night_crosses %} {{ now_h >= ns or now_h < ne }}
+        {% else %}             {{ now_h >= ns and now_h < ne }}
         {% endif %}
       
       is_in_slot: >-
-        {% if ns > ne %} {% set night_active = (now_h >= ns or now_h < ne) %}
-        {% else %}       {% set night_active = (now_h >= ns and now_h < ne) %}
+        {% if night_crosses %} {% set night_active = (now_h >= ns or now_h < ne) %}
+        {% else %}             {% set night_active = (now_h >= ns and now_h < ne) %}
         {% endif %}
-        {% if ds > de %} {% set day_active = (now_h >= ds or now_h < de) %}
-        {% else %}       {% set day_active = (now_h >= ds and now_h < de) %}
+        {% if day_crosses %}   {% set day_active = (now_h >= ds or now_h < de) %}
+        {% else %}             {% set day_active = (now_h >= ds and now_h < de) %}
         {% endif %}
         {{ night_active or day_active }}
 
@@ -394,7 +413,7 @@ action:
       discharge_start_price: "{{ last_paid_price * (1 + (min_discharge_margin / 100)) }}"
 
   - choose:
-      # --- PRIORITY 1: REPORTING (MOVED TO TOP) ---
+      # --- PRIORITY 1: REPORTING ---
       - conditions:
           - condition: trigger
             id: "report"
@@ -407,31 +426,71 @@ action:
                 type: notify
                 device_id: !input notify_device
                 message: >-
-                  📊 **Battery Plan**
-                  
-                  🔋 **Status**
-                  Current: {{ current_soc }}% | Morning Buffer: {{ target_soc_morning_min }}%
-                  
-                  💰 **Financial**
-                  Strict (<): €{{ charge_limit_strict | round(3) }}
-                  Buffer (<): €{{ buffer_limit | round(3) }} (-{{ buffer_discount_percentage }}% of Peak)
-                  AM Peak: €{{ filtered_data.am_peak | round(3) }}
-                  PM Peak: €{{ filtered_data.pm_peak | round(3) }}
-                  
-                  🕒 **Schedule**
-                  {%- set ns_list = namespace(found=[]) %}
-                  {%- for item in filtered_data.slot_data %}
-                    {%- set is_night_slot = (item.local_hour >= night_start.split(':')[0]|int or item.local_hour < night_end.split(':')[0]|int) %}
+                  {% if language == 'nl' %}
+                    📊 **Batterij Rapport**
                     
-                    {%- if item.price <= charge_limit_strict %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strict]"] %}
-                    {%- elif item.price <= buffer_limit %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
-                    {%- elif is_night_slot and item.price < max_price_cap and current_soc < target_soc_morning_min %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Morning)"] %}
-                    {%- endif %}
-                  {%- endfor %}
-                  {{ ns_list.found | join('\n') if ns_list.found else "No slots found." }}
+                    🔋 **Status**
+                    Huidig: {{ current_soc }}% | Doel: {{ dynamic_target_soc }}%
+                    Ochtend Buffer: {{ target_soc_morning_min }}%
+                    
+                    💰 **Financieel**
+                    Strikt (<): €{{ charge_limit_strict | round(3) }}
+                    Buffer (<): €{{ buffer_limit | round(3) }}
+                    AM Piek: €{{ filtered_data.am_peak | round(3) }} | PM Piek: €{{ filtered_data.pm_peak | round(3) }}
+                    
+                    🕒 **Starttijden**
+                    {%- set ns_list = namespace(found=[]) %}
+                    {%- for item in filtered_data.slot_data %}
+                      {%- set h = item.local_hour %}
+                      {%- set is_night_item = false %}
+                      {%- if night_crosses %}
+                        {%- set is_night_item = (h >= ns or h < ne) %}
+                      {%- else %}
+                        {%- set is_night_item = (h >= ns and h < ne) %}
+                      {%- endif %}
+                      
+                      {%- if item.price <= charge_limit_strict %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strikt]"] %}
+                      {%- elif item.price <= buffer_limit %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
+                      {%- elif is_night_item and item.price < max_price_cap and current_soc < target_soc_morning_min %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Ochtend)"] %}
+                      {%- endif %}
+                    {%- endfor %}
+                    {{ ns_list.found | join('\n') if ns_list.found else "Geen." }}
+                  {% else %}
+                    📊 **Battery Plan**
+                    
+                    🔋 **Status**
+                    Current: {{ current_soc }}% | Target: {{ dynamic_target_soc }}%
+                    Morning Buffer: {{ target_soc_morning_min }}%
+                    
+                    💰 **Financial**
+                    Strict (<): €{{ charge_limit_strict | round(3) }}
+                    Buffer (<): €{{ buffer_limit | round(3) }}
+                    AM Peak: €{{ filtered_data.am_peak | round(3) }} | PM Peak: €{{ filtered_data.pm_peak | round(3) }}
+                    
+                    🕒 **Schedule**
+                    {%- set ns_list = namespace(found=[]) %}
+                    {%- for item in filtered_data.slot_data %}
+                      {%- set h = item.local_hour %}
+                      {%- set is_night_item = false %}
+                      {%- if night_crosses %}
+                        {%- set is_night_item = (h >= ns or h < ne) %}
+                      {%- else %}
+                        {%- set is_night_item = (h >= ns and h < ne) %}
+                      {%- endif %}
+                      
+                      {%- if item.price <= charge_limit_strict %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strict]"] %}
+                      {%- elif item.price <= buffer_limit %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
+                      {%- elif is_night_item and item.price < max_price_cap and current_soc < target_soc_morning_min %}
+                        {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Morning)"] %}
+                      {%- endif %}
+                    {%- endfor %}
+                    {{ ns_list.found | join('\n') if ns_list.found else "No slots found." }}
+                  {% endif %}
 
       # --- PRIORITY 2: BOOST ---
       - conditions:
@@ -529,8 +588,13 @@ action:
                 type: notify
                 device_id: !input notify_device
                 message: >-
-                  🟢 Start Charging (€{{ current_price | round(3) }})
-                  Ref Peak: €{{ relevant_peak_price | round(3) }}
+                  {% if language == 'nl' %}
+                    🟢 Start Laden (€{{ current_price | round(3) }})
+                    Ref Piek: €{{ relevant_peak_price | round(3) }}
+                  {% else %}
+                    🟢 Start Charging (€{{ current_price | round(3) }})
+                    Ref Peak: €{{ relevant_peak_price | round(3) }}
+                  {% endif %}
 
       # --- PRIORITY 5: DISCHARGING ---
       - conditions:
@@ -540,7 +604,7 @@ action:
           - service: switch.turn_off
             target:
               entity_id: !input battery_reserve_switch
-          # Un-anchor: Set Reserve back to min
+          # Un-anchor
           - if:
               - condition: template
                 value_template: "{{ (states(target_soc_number)|float(0) - min_base_soc)|abs > 1 }}"
@@ -583,6 +647,6 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "🟡 Smart Hold (Anchored at {{ current_soc }}%)"
+                    message: "{{ '🟡 Smart Hold' if language == 'nl' else '🟡 Smart Hold' }}"
 
 mode: single
