@@ -1,15 +1,12 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.4.3 (Percentage Logic)"
+  name: "Frank Energie - Smart Battery Manager v1.4.4 (Report Fix)"
   description: >
-    Smart battery charging based on Frank Energy prices.
-    
-    UPDATES:
-    - **Percentages:** Both Buffer (Charge) and Profit (Discharge) strategies now use percentages.
-    - **Device Notification:** Restored the easy device selector for notifications.
+    **Fix v1.4.4:** Moved Reporting to the highest priority. Prevents other logic (like Smart Hold) from hijacking the report trigger.
     
     STRATEGY:
-    1. **Charge (Buffer):** If Price < (Daily Peak * (1 - Buffer%)).
-    2. **Discharge (Profit):** If Price > (Last Buy Price * (1 + Profit%)).
+    - Weighted Peak Analysis & Profit Margins.
+    - Morning Guarantee (Night only).
+    - Smart Hold & Switch-Only Discharge.
   domain: automation
   input:
     # --- BASIC ENTITIES ---
@@ -26,7 +23,6 @@ blueprint:
           device_class: battery
     target_soc_number:
       name: "Entity: Target SoC"
-      description: "The number entity on your inverter controlling the reserve/charge limit."
       selector:
         entity:
           domain: number
@@ -39,15 +35,13 @@ blueprint:
     # --- MEMORY ---
     last_price_helper:
       name: "Helper: Last Purchase Price"
-      description: "Input Number to store the price at which the battery was last charged."
       selector:
         entity:
           domain: input_number
 
-    # --- STRATEGY: PERCENTAGES ---
+    # --- STRATEGY ---
     peak_hours_count:
       name: "Peak Analysis Window"
-      description: "Average of top X expensive hours to define 'Daily Peak'."
       default: 3
       selector:
         number:
@@ -56,10 +50,7 @@ blueprint:
     
     buffer_discount_percentage:
       name: "Buffer Discount (%)"
-      description: >
-        Charging Strategy: How much cheaper must the price be compared to the Daily Peak?
-        Formula: Max Charge Price = Peak * (1 - Discount%).
-        Example: Peak is €0.40. Discount 25% -> Charge below €0.30.
+      description: "Charge if Price < Peak * (1 - Discount%)."
       default: 40
       selector:
         number:
@@ -69,10 +60,7 @@ blueprint:
 
     min_discharge_margin:
       name: "Min. Discharge Profit (%)"
-      description: >
-        Discharging Strategy: Minimum profit margin required above the purchase price.
-        Formula: Min Discharge Price = Last Buy Price * (1 + Margin%).
-        Example: Bought at €0.20. Margin 20% -> Discharge above €0.24.
+      description: "Discharge if Price > Buy Price * (1 + Margin%)."
       default: 20
       selector:
         number:
@@ -83,7 +71,6 @@ blueprint:
     # --- MORNING GUARANTEE ---
     target_soc_morning_min:
       name: "Morning Guarantee (%)"
-      description: "Minimum SoC to ensure during the Night Slot."
       default: 50
       selector:
         number:
@@ -93,7 +80,6 @@ blueprint:
 
     min_base_soc:
       name: "Absolute Minimum SoC (%)"
-      description: "Critical floor. Always charge below this level."
       default: 15
       selector:
         number:
@@ -109,10 +95,8 @@ blueprint:
         entity:
           domain: input_boolean
     
-    # RESTORED: Device Selector
     notify_device:
       name: "Notification Device"
-      description: "Select your phone to receive reports."
       default: []
       selector:
         device:
@@ -279,7 +263,6 @@ action:
       current_price: "{{ states(frank_price_sensor) | float(0) }}"
       last_paid_price: "{{ states(last_price_helper) | float(0) }}"
       is_boost_active: "{{ boost_switch != [] and is_state(boost_switch, 'on') }}"
-      # Check if a device is selected
       has_notify_device: "{{ notify_device != [] }}"
 
       # --- 1. TIME SLOT LOGIC ---
@@ -303,7 +286,7 @@ action:
         {% endif %}
         {{ night_active or day_active }}
 
-      # --- 2. DATA PARSING ---
+      # --- 2. DATA PARSEN ---
       raw: "{{ state_attr(frank_price_sensor, 'prices') }}"
       prices_json: >-
         {% if raw %}
@@ -381,8 +364,7 @@ action:
         {% else %} {{ filtered_data.pm_peak }}
         {% endif %}
       
-      # --- BUFFER LIMIT (PERCENTAGE) ---
-      # Limit = Peak * (1 - Discount/100)
+      # Buffer Limit (Percentage)
       buffer_limit: "{{ relevant_peak_price * (1 - (buffer_discount_percentage / 100)) }}"
 
       # --- 4. TARGETS ---
@@ -409,11 +391,49 @@ action:
         {% else %} -999 {% endif %}
 
       # --- 6. DISCHARGE THRESHOLD (PERCENTAGE) ---
-      # Discharge if > Buy Price * (1 + Margin/100)
       discharge_start_price: "{{ last_paid_price * (1 + (min_discharge_margin / 100)) }}"
 
   - choose:
-      # --- SCENARIO 1: BOOST ---
+      # --- PRIORITY 1: REPORTING (MOVED TO TOP) ---
+      - conditions:
+          - condition: trigger
+            id: "report"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ has_notify_device }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                message: >-
+                  📊 **Battery Plan**
+                  
+                  🔋 **Status**
+                  Current: {{ current_soc }}% | Morning Buffer: {{ target_soc_morning_min }}%
+                  
+                  💰 **Financial**
+                  Strict (<): €{{ charge_limit_strict | round(3) }}
+                  Buffer (<): €{{ buffer_limit | round(3) }} (-{{ buffer_discount_percentage }}% of Peak)
+                  AM Peak: €{{ filtered_data.am_peak | round(3) }}
+                  PM Peak: €{{ filtered_data.pm_peak | round(3) }}
+                  
+                  🕒 **Schedule**
+                  {%- set ns_list = namespace(found=[]) %}
+                  {%- for item in filtered_data.slot_data %}
+                    {%- set is_night_slot = (item.local_hour >= night_start.split(':')[0]|int or item.local_hour < night_end.split(':')[0]|int) %}
+                    
+                    {%- if item.price <= charge_limit_strict %}
+                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strict]"] %}
+                    {%- elif item.price <= buffer_limit %}
+                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
+                    {%- elif is_night_slot and item.price < max_price_cap and current_soc < target_soc_morning_min %}
+                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Morning)"] %}
+                    {%- endif %}
+                  {%- endfor %}
+                  {{ ns_list.found | join('\n') if ns_list.found else "No slots found." }}
+
+      # --- PRIORITY 2: BOOST ---
       - conditions:
           - condition: template
             value_template: "{{ is_boost_active }}"
@@ -427,7 +447,7 @@ action:
             target:
               entity_id: !input battery_reserve_switch
 
-      # --- SCENARIO 2: EMERGENCY ---
+      # --- PRIORITY 3: EMERGENCY ---
       - conditions:
           - condition: template
             value_template: "{{ current_soc < min_base_soc }}"
@@ -448,7 +468,7 @@ action:
             data:
               value: "{{ current_price }}"
 
-      # --- SCENARIO 3: CHARGING ---
+      # --- PRIORITY 4: CHARGING ---
       - conditions:
           - condition: or
             conditions:
@@ -462,7 +482,7 @@ action:
                   - condition: template
                     value_template: "{{ current_price < max_price_cap }}"
               
-              # B. SMART BUFFER (Percentage Discount)
+              # B. SMART BUFFER
               - condition: and
                 conditions:
                   - condition: template
@@ -512,7 +532,7 @@ action:
                   🟢 Start Charging (€{{ current_price | round(3) }})
                   Ref Peak: €{{ relevant_peak_price | round(3) }}
 
-      # --- SCENARIO 4: DISCHARGING (RELEASE) ---
+      # --- PRIORITY 5: DISCHARGING ---
       - conditions:
           - condition: template
             value_template: "{{ current_price >= discharge_start_price }}"
@@ -520,6 +540,7 @@ action:
           - service: switch.turn_off
             target:
               entity_id: !input battery_reserve_switch
+          # Un-anchor: Set Reserve back to min
           - if:
               - condition: template
                 value_template: "{{ (states(target_soc_number)|float(0) - min_base_soc)|abs > 1 }}"
@@ -530,7 +551,7 @@ action:
                 data:
                   value: "{{ min_base_soc | int }}"
 
-      # --- SCENARIO 5: HOLD (RATCHET) ---
+      # --- PRIORITY 6: HOLD ---
       - conditions:
           - condition: template
             value_template: "{{ current_price > charge_limit_strict }}"
@@ -540,6 +561,7 @@ action:
           - service: switch.turn_on
             target:
               entity_id: !input battery_reserve_switch
+          # Ratchet Logic
           - if:
               - condition: template
                 value_template: "{{ (states(target_soc_number)|float(0) - current_soc) > 2 }}"
@@ -562,44 +584,5 @@ action:
                     type: notify
                     device_id: !input notify_device
                     message: "🟡 Smart Hold (Anchored at {{ current_soc }}%)"
-
-      # --- REPORTING TRIGGER ---
-      - conditions:
-          - condition: trigger
-            id: "report"
-        sequence:
-          - if:
-              - condition: template
-                value_template: "{{ has_notify_device }}"
-            then:
-              - domain: mobile_app
-                type: notify
-                device_id: !input notify_device
-                message: >-
-                  📊 **Battery Plan**
-                  
-                  🔋 **Status**
-                  Current: {{ current_soc }}% | Morning Buffer: {{ target_soc_morning_min }}%
-                  
-                  💰 **Financial**
-                  Strict (<): €{{ charge_limit_strict | round(3) }}
-                  Buffer (<): €{{ buffer_limit | round(3) }} (-{{ buffer_discount_percentage }}% of Peak)
-                  AM Peak: €{{ filtered_data.am_peak | round(3) }}
-                  PM Peak: €{{ filtered_data.pm_peak | round(3) }}
-                  
-                  🕒 **Schedule**
-                  {%- set ns_list = namespace(found=[]) %}
-                  {%- for item in filtered_data.slot_data %}
-                    {%- set is_night_slot = (item.local_hour >= night_start.split(':')[0]|int or item.local_hour < night_end.split(':')[0]|int) %}
-                    
-                    {%- if item.price <= charge_limit_strict %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (€" ~ item.price|round(3) ~ ") [Strict]"] %}
-                    {%- elif item.price <= buffer_limit %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Buffer)"] %}
-                    {%- elif is_night_slot and item.price < max_price_cap and current_soc < target_soc_morning_min %}
-                      {%- set ns_list.found = ns_list.found + [item.day_str ~ " " ~ item.local_hour ~ ":00 (Morning)"] %}
-                    {%- endif %}
-                  {%- endfor %}
-                  {{ ns_list.found | join('\n') if ns_list.found else "No slots found." }}
 
 mode: single
