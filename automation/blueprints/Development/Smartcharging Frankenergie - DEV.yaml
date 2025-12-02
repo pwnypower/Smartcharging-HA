@@ -1,11 +1,11 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.5.8 (Day Focus)"
+  name: "Frank Energie - Smart Battery Manager v1.5.9 (JSON Fix)"
   description: >
-    **Fix v1.5.8:**
-    - Peak Analysis now strictly looks at TODAY's prices only.
-    - Prevents charging today for a peak that occurs tomorrow (which would be inefficient).
+    **Fix v1.5.9:**
+    - JSON Engine Rebuild: Uses proper 'to_json' filters to prevent escaping issues in traces.
+    - Data is now cleaner and easier to debug.
     
-    STRATEGY: Profit, Hardware Protection & 24/7 Logic.
+    STRATEGY: Profit, Hardware Protection & 24/7 Logic (Day-Ahead Peak ignored).
   domain: automation
   input:
     # --- GENERAL ---
@@ -223,6 +223,7 @@ trigger:
     id: "boost"
 
 action:
+  # --- 1. STRICT VARIABLE MAPPING ---
   - variables:
       conf_soc_sensor: !input battery_soc_sensor
       conf_price_sensor: !input frank_price_sensor
@@ -252,6 +253,7 @@ action:
       conf_night_start: !input night_start
       conf_night_end: !input night_end
 
+  # --- 2. LOGIC ---
   - variables:
       current_soc: "{{ states(conf_soc_sensor) | float(0) }}"
       current_price: "{{ states(conf_price_sensor) | float(0) }}"
@@ -268,7 +270,8 @@ action:
         {% else %}             {{ now_h >= ns and now_h < ne }}
         {% endif %}
 
-      # --- DATA PARSING ---
+      # --- 3. DATA PARSEN ---
+      # Using strict JSON construction to avoid escaping issues
       raw: "{{ state_attr(conf_price_sensor, 'prices') }}"
       prices_json: >-
         {% if raw %}
@@ -276,8 +279,8 @@ action:
           {% set matches = text | regex_findall(
             "datetime\\.datetime\\((\\d+), (\\d+), (\\d+), (\\d+), (\\d+).*?price': ([0-9.]+)"
           ) %}
-          [
-          {%- for m in matches %}
+          {% set ns = namespace(items=[]) %}
+          {% for m in matches %}
             {% set y = m[0]|int %}
             {% set mo = m[1]|int %}
             {% set d = m[2]|int %}
@@ -286,17 +289,15 @@ action:
             {% set price = m[5]|float %}
             {% set raw_dt_str = "%04d-%02d-%02dT%02d:%02d:00" | format(y, mo, d, h, mn) %}
             {% set ts_val = as_timestamp(raw_dt_str) %}
-            {
-              "local_hour": {{ h }},
-              "day_str": "{{ 'Today' if d == now().day else 'Tomorrow' }}",
-              "ts": {{ ts_val }},
-              "price": {{ price }}
-            }{{ "," if not loop.last }}
-          {%- endfor %}
-          ]
+            {% set day_str = 'Today' if d == now().day else 'Tomorrow' %}
+            {% set item = dict(local_hour=h, day_str=day_str, ts=ts_val, price=price) %}
+            {% set ns.items = ns.items + [item] %}
+          {% endfor %}
+          {{ ns.items | to_json }}
         {% else %} [] {% endif %}
 
-      # --- ANALYSIS (DAY ONLY) ---
+      # --- 4. ANALYSIS (DAY ONLY) ---
+      # Using 'to_json' to prevent unwanted escaping in trace
       filtered_data: >-
         {% set output = namespace(price_list=[], slot_data=[], am_prices=[], pm_prices=[]) %}
         {% set now_ts = as_timestamp(now()) %}
@@ -308,7 +309,7 @@ action:
                   {% set output.price_list = output.price_list + [item.price] %}
                   {% set output.slot_data = output.slot_data + [item] %}
                   
-                  {# ONLY ADD TO PEAK CALC IF IT IS TODAY #}
+                  {# ONLY TODAY #}
                   {% if item.day_str == 'Today' %}
                     {% if item.local_hour < 12 %}
                        {% set output.am_prices = output.am_prices + [item.price] %}
@@ -335,19 +336,19 @@ action:
            {% set count = [sort_pm|length, pk] | min %}
            {% set pm_avg = (sort_pm[:count] | sum / count) %}
         {% endif %}
-
-        {"all": {{ output.price_list }}, "slot_data": {{ output.slot_data }}, "am_peak": {{ am_avg }}, "pm_peak": {{ pm_avg }} }
+        
+        {{ dict(all=output.price_list, slot_data=output.slot_data, am_peak=am_avg, pm_peak=pm_avg) | to_json }}
 
       # --- VARIABLES ---
       sorted_all: "{{ filtered_data.all | sort }}"
       
-      # Determine Peak (Based on TODAY's blocks)
+      # Determine Peak
       relevant_peak_price: >-
         {% if is_night_now %} {{ filtered_data.am_peak }}
         {% else %} {{ filtered_data.pm_peak }}
         {% endif %}
       
-      buffer_limit: "{{ relevant_peak_price * (1 - (p_buffer_disc|float / 100)) }}"
+      buffer_limit: "{{ relevant_peak_price | float * (1 - (p_buffer_disc|float / 100)) }}"
 
       # Targets
       forecast_tomorrow_val: "{{ states(s_sol_tom) | float(0) }}"
@@ -360,7 +361,7 @@ action:
         {% else %} {{ t_winter }}
         {% endif %}
 
-      # Strict Charge Limit (Looks at 24-48h global low)
+      # Strict Charge Limit
       charge_limit_strict: >-
         {% set deficit = dynamic_target_soc|float - current_soc %}
         {% if deficit > 0 %}
@@ -390,7 +391,7 @@ action:
                 device_id: !input notify_device
                 message: >-
                   {% if language == 'nl' %}
-                    📊 **Batterij Rapport (Vandaag)**
+                    📊 **Batterij Rapport (24/7)**
                     
                     🔋 **Status**
                     Huidig: {{ current_soc }}% | Doel: {{ dynamic_target_soc }}%
@@ -518,10 +519,8 @@ action:
                 message: >-
                   {% if language == 'nl' %}
                     🟢 Start Laden (€{{ current_price | round(3) }})
-                    Ref Piek: €{{ relevant_peak_price | round(3) }}
                   {% else %}
                     🟢 Start Charging (€{{ current_price | round(3) }})
-                    Ref Peak: €{{ relevant_peak_price | round(3) }}
                   {% endif %}
 
       # --- 5. DISCHARGING ---
@@ -529,14 +528,17 @@ action:
         conditions:
           - condition: or
             conditions:
+              # A. Price High
               - condition: template
                 value_template: "{{ current_price >= discharge_start_price }}"
+              # B. Battery Full (Full Release v1.5.7 logic)
               - condition: template
                 value_template: "{{ current_soc >= 90 }}"
         sequence:
           - service: switch.turn_off
             target:
               entity_id: !input battery_reserve_switch
+          # Un-anchor
           - if:
               - condition: template
                 value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc | float) | abs > 1 }}"
@@ -560,6 +562,7 @@ action:
           - service: switch.turn_on
             target:
               entity_id: !input battery_reserve_switch
+          # Ratchet Logic
           - if:
               - condition: template
                 value_template: "{{ (states(conf_target_num)|float(0) - current_soc) > 2 }}"
