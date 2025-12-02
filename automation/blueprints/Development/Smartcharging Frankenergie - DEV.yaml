@@ -1,10 +1,10 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.6 (Dayround 24/7)"
+  name: "Frank Energie - Smart Battery Manager v1.6.1 (Dayround Fix)"
   description: >
-    **v1.6 Dayround:**
-    - Alle tijdsloten verwijderd; systeem analyseert nu 24/7.
-    - Rolling Peak Analysis: Buffer vergelijkt alleen met pieken in de komende 12u om te voorkomen dat dure prijzen van morgen nu onnodig laden triggeren.
-    - Sequential Processing voor correcte data-verwerking.
+    **Fix v1.6.1:**
+    - Syntaxfout in 'default' actie opgelost.
+    - Dayround logica (24/7) actief.
+    - Rolling Peak Analysis (voorkomt laden voor dure prijzen van morgen).
     
     STRATEGY: Profit & Hardware Protection.
   domain: automation
@@ -330,16 +330,12 @@ action:
         {% endif %}
 
       # Charge Ceiling STRICT (Global low prices)
-      # Dit kijkt naar ALLE bekende prijzen (vandaag + morgen) en pakt de allerlaagste
-      # Dit voorkomt dat we nu laden als het morgenmiddag gratis is.
       charge_limit_strict: >-
         {% set deficit = dynamic_target_soc | float - current_soc %}
         {% if deficit > 0 %}
            {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-           {# Calculate hours needed based on charge speed #}
            {% set hours_needed = (kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
            
-           {# Find price at index X in sorted list #}
            {% if sorted_all | length > 0 %}
              {% set idx = (hours_needed - 1) if (hours_needed - 1) < sorted_all|length else (sorted_all|length - 1) %}
              {{ sorted_all[idx] }}
@@ -372,8 +368,8 @@ action:
                     SoC: {{ current_soc }}% | Doel: {{ dynamic_target_soc }}%
                     
                     💰 **Drempels**
-                    Strikt (<): €{{ charge_limit_strict | round(3) }} (Global Min)
-                    Buffer (<): €{{ buffer_limit | round(3) }} (vs 12u Piek)
+                    Strikt (<): €{{ charge_limit_strict | round(3) }}
+                    Buffer (<): €{{ buffer_limit | round(3) }}
                     12u Piek Ref: €{{ relevant_peak_price | round(3) }}
                     
                     🕒 **Geplande Acties**
@@ -391,8 +387,6 @@ action:
                   {% else %}
                     📊 **Dayround Report**
                     Status: {{ current_soc }}% / {{ dynamic_target_soc }}%
-                    Strict: €{{ charge_limit_strict | round(3) }}
-                    Buffer: €{{ buffer_limit | round(3) }}
                   {% endif %}
 
       # --- PRIORITY 2: BOOST ---
@@ -437,7 +431,7 @@ action:
         conditions:
           - condition: or
             conditions:
-              # A. STRICT (Global Cheapest)
+              # A. STRICT
               - condition: and
                 conditions:
                   - condition: template
@@ -446,7 +440,7 @@ action:
                     value_template: "{{ current_soc < dynamic_target_soc | float }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
-              # B. BUFFER (Local Cheapest vs next 12h)
+              # B. BUFFER
               - condition: and
                 conditions:
                   - condition: template
@@ -456,30 +450,19 @@ action:
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
         sequence:
-          # 1. SET TARGET
-          - if:
-              - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc | float) | abs > 1 }}"
-            then:
-              - service: number.set_value
-                target:
-                  entity_id: !input target_soc_number
-                data:
-                  value: "{{ dynamic_target_soc }}"
-          
-          # 2. SWITCH ON
+          - service: number.set_value
+            target:
+              entity_id: !input target_soc_number
+            data:
+              value: "{{ dynamic_target_soc }}"
           - service: switch.turn_on
             target:
               entity_id: !input battery_reserve_switch
-          
-          # 3. STORE PRICE
           - service: input_number.set_value
             target:
               entity_id: !input last_price_helper
             data:
               value: "{{ current_price }}"
-          
-          # 4. NOTIFICATION
           - if:
               - condition: template
                 value_template: "{{ has_notify_device }}"
@@ -505,7 +488,6 @@ action:
           - service: switch.turn_off
             target:
               entity_id: !input battery_reserve_switch
-          # Un-anchor to allow discharge
           - if:
               - condition: template
                 value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc | float) | abs > 1 }}"
@@ -516,22 +498,19 @@ action:
                 data:
                   value: "{{ p_min_base_soc | int }}"
 
-      # --- PRIORITY 6: SMART HOLD (Preserve cheap energy) ---
+      # --- PRIORITY 6: SMART HOLD ---
       - alias: "6. Smart Hold"
         conditions:
-          # If NOT charging and NOT discharging, we check HOLD status
           - condition: template
             value_template: "{{ current_price > charge_limit_strict }}"
           - condition: template
             value_template: "{{ current_price < discharge_start_price }}"
-          # Only hold if we actually have charge above minimum
           - condition: template
             value_template: "{{ current_soc > p_min_base_soc | float }}"
         sequence:
           - service: switch.turn_on
             target:
               entity_id: !input battery_reserve_switch
-          # Ratchet: Set target to current SOC to stop grid charge but prevent discharge
           - if:
               - condition: template
                 value_template: "{{ (states(conf_target_num)|float(0) - current_soc) > 1 }}"
@@ -555,11 +534,12 @@ action:
                     device_id: !input notify_device
                     message: "🟡 Smart Hold (Prijs neutraal)"
 
-      # --- PRIORITY 7: DEFAULT / ECO (House Consumption) ---
-      - alias: "7. Eco Mode (Default)"
-        default:
-          - service: switch.turn_off
-            target:
-              entity_id: !input battery_reserve_switch
+    # --- PRIORITY 7: DEFAULT / ECO (House Consumption) ---
+    # Dit is de 'else' als geen van bovenstaande voorwaarden waar is.
+    # Hier zetten we de switch UIT zodat de batterij het huis kan voeden (Eco mode).
+    default:
+      - service: switch.turn_off
+        target:
+          entity_id: !input battery_reserve_switch
 
 mode: single
