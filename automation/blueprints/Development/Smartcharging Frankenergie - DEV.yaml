@@ -489,7 +489,7 @@ action:
         sequence:
         - if:
               - condition: template
-                value_template: "{{ is_state(conf_switch, 'off') }}"
+                value_template: "{{ is_state(conf_switch, 'on') }}"
           then:
               - service: switch.turn_off
                 target:
