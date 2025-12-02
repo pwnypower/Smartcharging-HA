@@ -487,9 +487,13 @@ action:
           - condition: template
             value_template: "{{ current_price >= discharge_start_price }}"
         sequence:
-          - service: switch.turn_off
-            target:
-              entity_id: !input battery_reserve_switch
+        - if:
+              - condition: template
+                value_template: "{{ is_state(conf_switch, 'off') }}"
+          then:
+              - service: switch.turn_off
+                target:
+                 entity_id: !input battery_reserve_switch
       # --- PRIORITY 6: SMART HOLD ---
       - alias: "6. Smart Hold"
         conditions:
