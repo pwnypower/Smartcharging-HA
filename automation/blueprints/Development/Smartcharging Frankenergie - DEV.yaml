@@ -5,6 +5,8 @@ blueprint:
     - Syntaxfout in 'default' actie opgelost.
     - Dayround logica (24/7) actief.
     - Rolling Peak Analysis (voorkomt laden voor dure prijzen van morgen).
+    - de noodzaak dat het systeem de backup soc aanpast bij uitzetten van de reserve weggehaald.
+    
     
     STRATEGY: Profit & Hardware Protection.
   domain: automation
