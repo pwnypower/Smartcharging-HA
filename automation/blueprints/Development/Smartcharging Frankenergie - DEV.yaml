@@ -466,7 +466,7 @@ action:
           - if:
               - condition: template
                 # Check: Is het verschil tussen huidige instelling en wens groter dan 0.1?
-                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.5 }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target:
