@@ -1,5 +1,5 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.6.2 (Backup Soc)"
+  name: "Frank Energie - Smart Battery Manager v1.6.2.1 (Backup Soc)"
   description: >
     **Fix v1.6.1:**
     - Syntaxfout in 'default' actie opgelost.
