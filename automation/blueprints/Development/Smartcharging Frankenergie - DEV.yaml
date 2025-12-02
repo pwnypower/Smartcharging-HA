@@ -1,12 +1,12 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.6.1 (Dayround Fix)"
+  name: "Frank Energie - Smart Battery Manager v1.6.2 (Backup Soc)"
   description: >
     **Fix v1.6.1:**
     - Syntaxfout in 'default' actie opgelost.
     - Dayround logica (24/7) actief.
     - Rolling Peak Analysis (voorkomt laden voor dure prijzen van morgen).
     - de noodzaak dat het systeem de backup soc aanpast bij uitzetten van de reserve weggehaald.
-    
+
     
     STRATEGY: Profit & Hardware Protection.
   domain: automation
