@@ -231,7 +231,7 @@ action:
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
-      language: !input Language
+      language: !input language
       
       # Targets & Solar
       t_winter: !input target_soc_winter
