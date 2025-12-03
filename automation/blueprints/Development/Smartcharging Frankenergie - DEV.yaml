@@ -214,6 +214,7 @@ action:
   # --- STEP 1: MAP INPUTS TO VARIABLES ---
   - variables:
       # Entities
+      language: !input language
       conf_soc_sensor: !input battery_soc_sensor
       conf_price_sensor: !input frank_price_sensor
       conf_last_price: !input last_price_helper
@@ -231,7 +232,7 @@ action:
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
-      language: !input language
+
       
       # Targets & Solar
       t_winter: !input target_soc_winter
