@@ -1,16 +1,11 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.7 (BETA)"
+  name: "Frank Energie - Smart Battery Manager v1.7.1 (Weighted Avg)"
   description: >
-    **Fix v1.6.1:**
-    Fix v1.6.1: Solved a syntax error in the 'default' action sequence.
+    **Fix v1.7.1:**
+    - "Weighted Average Price" logica toegevoegd. Bij het bijladen wordt de nieuwe laadprijs 
+      berekend als een gewogen gemiddelde van wat er al in zat en wat erbij komt.
+      Dit voorkomt dat een klein beetje bijladen (top-up) je hele inkoopprijs verpest.
 
-    Dayround Logic: The logic is now active 24/7, ensuring optimal decisions throughout the day and night.
-
-    Rolling Peak Analysis: The system now looks ahead 12 hours. It calculates a rolling average of peak prices to prevent charging now if prices are expected to drop significantly tomorrow.
-
-    Backup SoC Logic: Removed the necessity for the system to adjust the hardware backup SoC when disabling the reserve switch.
-
-    
     STRATEGY: Profit & Hardware Protection.
   domain: automation
   input:
@@ -235,7 +230,6 @@ action:
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
-
       
       # Targets & Solar
       t_winter: !input target_soc_winter
@@ -422,7 +416,6 @@ action:
         # --- CHECK & SET SOC ---
           - if:
               - condition: template
-                # Check: Is het verschil tussen huidige instelling en wens groter dan 0.1?
                 value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
@@ -437,11 +430,24 @@ action:
               - service: switch.turn_on
                 target:
                   entity_id: !input battery_reserve_switch
+          
+          # UPDATE PRICE (Weighted Average Logic)
           - service: input_number.set_value
             target:
               entity_id: !input last_price_helper
             data:
-              value: "{{ current_price }}"
+              value: >-
+                {% set old_soc = current_soc %}
+                {% set old_price = last_paid_price %}
+                {% set new_price = current_price %}
+                {% set target = p_min_base_soc | float %}
+                {% if target > old_soc %}
+                  {% set added_soc = target - old_soc %}
+                  {% set weighted_avg = ((old_soc * old_price) + (added_soc * new_price)) / target %}
+                  {{ weighted_avg | round(4) }}
+                {% else %}
+                  {{ old_price }}
+                {% endif %}
 
       # --- PRIORITY 4: SMART CHARGING (24/7) ---
       - alias: "4. Smart Charging"
@@ -485,11 +491,29 @@ action:
               - service: switch.turn_on
                 target:
                   entity_id: !input battery_reserve_switch
+          
+          # UPDATE PRICE (Weighted Average Logic)
           - service: input_number.set_value
             target:
               entity_id: !input last_price_helper
             data:
-              value: "{{ current_price }}"
+              value: >-
+                {% set old_soc = current_soc %}
+                {% set old_price = last_paid_price %}
+                {% set new_price = current_price %}
+                {% set target = dynamic_target_soc %}
+                
+                {# BEREKENING: (Oude Energie Waarde + Nieuwe Energie Waarde) / Totaal #}
+                {% if target > old_soc %}
+                  {% set added_soc = target - old_soc %}
+                  {% set weighted_avg = ((old_soc * old_price) + (added_soc * new_price)) / target %}
+                  {{ weighted_avg | round(4) }}
+                {% else %}
+                  {# Als we niet effectief laden (target <= current), update niks #}
+                  {# Tenzij de huidige prijs LAGER is dan gemiddeld, dan pakken we die mee #}
+                  {% if new_price < old_price %} {{ new_price }} {% else %} {{ old_price }} {% endif %}
+                {% endif %}
+
           - if:
               - condition: template
                 value_template: "{{ has_notify_device }}"
@@ -556,8 +580,6 @@ action:
                     message: "🟡 Smart Hold (Prijs neutraal)"
 
     # --- PRIORITY 7: DEFAULT / ECO (House Consumption) ---
-    # Dit is de 'else' als geen van bovenstaande voorwaarden waar is.
-    # Hier zetten we de switch UIT zodat de batterij het huis kan voeden (Eco mode).
     default:
       - service: switch.turn_off
         target:
