@@ -1,13 +1,12 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.7.2 (Solar Hybrid)"
+  name: "Frank Energie - Smart Battery Manager v1.7.3 (Night Filter)"
   description: >
-    **Fix v1.7.2:**
-    - Zonnestroom Integratie toegevoegd aan v1.7.1.
-    - Passief: Als de batterij vult door de zon (terwijl switch uit staat), daalt de gemiddelde prijs.
-    - Actief: Als de batterij moet laden (switch aan), maar de zon helpt mee (P1 meter lager dan laadvermogen),
-      wordt de prijs naar rato verlaagd.
-    
-    STRATEGY: Profit & Hardware Protection + Solar Intelligence.
+    **Fix v1.7.3:**
+    - "Night Filter" toegevoegd: De passieve solar-detectie (die de prijs verlaagt bij SoC stijging)
+      werkt nu ALLEEN als de zon boven de horizon staat. 
+    - Dit voorkomt dat BMS-schommelingen ('drifting') in de nacht onterecht de laadprijs verlagen.
+
+    STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
   input:
     # --- GENERAL ---
@@ -50,7 +49,7 @@ blueprint:
         entity:
           domain: input_number
 
-    # --- POWER SENSORS (NIEUW: Voor Hybride berekening) ---
+    # --- POWER SENSORS (Optioneel) ---
     p1_power_sensor:
       name: "Sensor: P1 Grid Import (Watt)"
       description: "Optioneel: Om te zien hoeveel stroom er écht gekocht wordt tijdens laden."
@@ -213,7 +212,7 @@ trigger:
   - platform: state
     entity_id: !input frank_price_sensor
     id: "price_change"
-  # NIEUW: Trigger voor Passieve Zonnestroom
+  # Trigger voor Passieve Zonnestroom (SoC Change)
   - platform: state
     entity_id: !input battery_soc_sensor
     id: "soc_change"
@@ -265,16 +264,13 @@ action:
       now_ts: "{{ as_timestamp(now()) }}"
 
   # --- STEP 3: CALCULATE HYBRID COST (Real-time Mix) ---
-  # Dit berekent wat stroom NU kost (Grid + Solar mix)
   - variables:
       current_charging_cost: >-
         {% if conf_p1 != [] and conf_bat_pow != [] %}
            {% set grid_w = states(conf_p1) | float(0) %}
            {% set bat_w = states(conf_bat_pow) | float(0) %}
            {% if bat_w > 10 %}
-             {# Grid Import kan niet meer zijn dan import, en niet negatief #}
              {% set grid_import = [grid_w, 0] | max %}
-             {# Ratio: Hoeveel % komt van het net? (Max 1.0) #}
              {% set ratio = [ (grid_import / bat_w), 1.0 ] | min %}
              {{ current_price * ratio }}
            {% else %}
@@ -284,14 +280,19 @@ action:
            {{ current_price }}
         {% endif %}
 
-  # --- STEP 4: PASSIVE SOLAR LOGIC (NIEUW BLOK) ---
-  # Als SoC stijgt en we forceerden dit niet -> Verlaag prijs
+  # --- STEP 4: PASSIVE SOLAR LOGIC (AANGEPAST: Night Filter) ---
   - choose:
       - conditions:
           - condition: trigger
             id: "soc_change"
+          # 1. SoC moet gestegen zijn
           - condition: template
             value_template: "{{ trigger.to_state.state | float(0) > trigger.from_state.state | float(0) }}"
+          # 2. De zon moet op zijn (NIEUW: Voorkomt nachtelijke drift updates)
+          - condition: state
+            entity_id: sun.sun
+            state: "above_horizon"
+          # 3. Was dit GEEN geforceerde lading?
           - condition: template
             value_template: >-
                {% set switch_on = is_state(conf_switch, 'on') %}
@@ -309,10 +310,9 @@ action:
                 {% if new_soc > 0 %}
                   {{ (old_price * (old_soc / new_soc)) | round(4) }}
                 {% else %} {{ old_price }} {% endif %}
-          # Stop hier, want dit was een passieve update
           - stop: "Solar price update completed"
 
-  # --- STEP 5: DATA PARSING (Origineel) ---
+  # --- STEP 5: DATA PARSING (Normal Logic) ---
   - variables:
       raw: "{{ state_attr(conf_price_sensor, 'prices') }}"
       prices_json: >-
@@ -341,7 +341,7 @@ action:
           ]
         {% else %} [] {% endif %}
 
-  # --- STEP 6: FILTER & ANALYZE (Origineel) ---
+  # --- STEP 6: FILTER & ANALYZE ---
   - variables:
       filtered_data: >-
         {% set output = namespace(all_prices=[], future_slots=[], short_term_prices=[]) %}
@@ -367,7 +367,7 @@ action:
         {% endif %}
         {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }} }
 
-  # --- STEP 7: DERIVED VARIABLES (Origineel) ---
+  # --- STEP 7: DERIVED VARIABLES ---
   - variables:
       sorted_all: "{{ filtered_data.all | sort }}"
       relevant_peak_price: "{{ filtered_data.peak }}"
@@ -393,7 +393,7 @@ action:
         {% else %} -999 {% endif %}
       discharge_start_price: "{{ last_paid_price * (1 + (p_min_discharge | float / 100)) }}"
 
-  # --- STEP 8: EXECUTION (Aangepast met Hybride formule) ---
+  # --- STEP 8: EXECUTION ---
   - choose:
       # --- PRIORITY 1: REPORTING ---
       - alias: "1. Send Report"
@@ -456,13 +456,12 @@ action:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
           
-          # UPDATE PRICE (AANGEPAST: Hybride Formule)
+          # UPDATE PRICE (Hybride)
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
               value: >-
                 {% set old_soc = current_soc %}
-                {# Hier gebruiken we de Hybride Cost (current_charging_cost) #}
                 {% set cost_now = current_charging_cost | float(current_price) %}
                 {% set old_price = last_paid_price %}
                 {% set target = p_min_base_soc | float %}
@@ -509,13 +508,12 @@ action:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
           
-          # UPDATE PRICE (AANGEPAST: Hybride Formule)
+          # UPDATE PRICE (Hybride)
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
               value: >-
                 {% set old_soc = current_soc %}
-                {# Hier gebruiken we de Hybride Cost (current_charging_cost) #}
                 {% set cost_now = current_charging_cost | float(current_price) %}
                 {% set old_price = last_paid_price %}
                 {% set target = dynamic_target_soc %}
@@ -524,7 +522,6 @@ action:
                   {% set added_soc = target - old_soc %}
                   {{ ((old_soc * old_price) + (added_soc * cost_now)) / target }}
                 {% else %}
-                  {# Als huidige mixprijs lager is dan gemiddeld, update #}
                   {% if cost_now < old_price %} {{ cost_now }} {% else %} {{ old_price }} {% endif %}
                 {% endif %}
 
