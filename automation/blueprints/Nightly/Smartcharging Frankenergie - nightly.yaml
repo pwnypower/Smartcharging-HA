@@ -1,10 +1,11 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.7.4 (Drift Fix)"
+  name: "Frank Energie - Smart Battery Manager v1.7.5 (Strict Fix)"
   description: >
-    **Fix v1.7.4:**
-    - Solar Price Drift Fix: Prijsaanpassing door SoC-stijging werkt nu alleen als de zon op is.
-    - Buffer Logic: Soepeler gemaakt. Laadt nu ook als prijs onder het 12-uurs gemiddelde ligt.
-    - Anti-Spam: Notificaties alleen bij statuswissel.
+    **Fix v1.7.5:**
+    - Buffer Logic: "Average Price" trigger verwijderd. Systeem laadt nu alleen weer als de prijs
+      echt X% lager is dan de piek (zoals ingesteld bij Buffer Discount).
+    - Voorkomt het "random laden" halverwege de dag bij matige prijzen.
+    - Bevat wel de Solar Drift (Nacht) fix van v1.7.4.
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -81,6 +82,7 @@ blueprint:
           max: 6
     buffer_discount_percentage:
       name: "Buffer Discount (%)"
+      description: "Laad als prijs X% lager is dan de piek. Zet lager (20-30%) als hij te weinig laadt."
       default: 40
       selector:
         number:
@@ -285,7 +287,7 @@ action:
           - condition: template
             value_template: "{{ trigger.to_state.state | float(0) > trigger.from_state.state | float(0) }}"
           - condition: template
-            value_template: "{{ is_daytime }}" # Only when sun is up!
+            value_template: "{{ is_daytime }}" # Only update solar price during day
           - condition: template
             value_template: >-
                {% set switch_on = is_state(conf_switch, 'on') %}
@@ -354,23 +356,19 @@ action:
         {% set pk_count = p_peak_count | int %}
         {% set sorted_short = output.short_term_prices | sort(reverse=True) %}
         {% set rolling_peak = 0 %}
-        {% set avg_price = 0 %}
         {% if sorted_short | length > 0 %}
            {% set count = [sorted_short|length, pk_count] | min %}
            {% set rolling_peak = (sorted_short[:count] | sum / count) %}
-           {% set avg_price = (output.short_term_prices | sum / output.short_term_prices | length) %}
         {% endif %}
-        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "avg": {{ avg_price }} }
+        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }} }
 
   # --- STEP 7: DERIVED VARIABLES ---
   - variables:
       sorted_all: "{{ filtered_data.all | sort }}"
       relevant_peak_price: "{{ filtered_data.peak }}"
-      avg_price_12h: "{{ filtered_data.avg }}"
       
-      # BUFFER: Laad als prijs < Piek - Discount OF als prijs < Gemiddelde
-      buffer_limit_calc: "{{ relevant_peak_price | float * (1 - (p_buffer_disc | float / 100)) }}"
-      buffer_limit: "{{ [buffer_limit_calc, avg_price_12h] | max }}"
+      # BUFFER: Strict again (removed Average fallback)
+      buffer_limit: "{{ relevant_peak_price | float * (1 - (p_buffer_disc | float / 100)) }}"
 
       forecast_tomorrow_val: "{{ states(s_sol_tom) | float(0) }}"
       relevant_solar: >-
