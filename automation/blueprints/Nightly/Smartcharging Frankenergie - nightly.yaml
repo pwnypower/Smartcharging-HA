@@ -1,11 +1,10 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v1.7.5 (Strict Fix)"
+  name: "Frank Energie - Smart Battery Manager v2.2 (Negative Support)"
   description: >
-    **Fix v1.7.5:**
-    - Buffer Logic: "Average Price" trigger verwijderd. Systeem laadt nu alleen weer als de prijs
-      echt X% lager is dan de piek (zoals ingesteld bij Buffer Discount).
-    - Voorkomt het "random laden" halverwege de dag bij matige prijzen.
-    - Bevat wel de Solar Drift (Nacht) fix van v1.7.4.
+    **Fix v2.2:**
+    - **Negative Prices:** De blokkade voor prijzen < 0.01 is verwijderd. Negatieve prijzen (geld toe) worden nu correct verwerkt.
+    - **Glitch Guard:** Blokkeert alleen nog EXACT 0.0 tijdens de nacht (om API crashes te filteren).
+    - Bevat alle eerdere fixes.
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -56,7 +55,7 @@ blueprint:
         entity:
           domain: sun
 
-    # --- POWER SENSORS ---
+    # --- POWER SENSORS (Optioneel) ---
     p1_power_sensor:
       name: "Sensor: P1 Grid Import (Watt)"
       default: []
@@ -82,7 +81,7 @@ blueprint:
           max: 6
     buffer_discount_percentage:
       name: "Buffer Discount (%)"
-      description: "Laad als prijs X% lager is dan de piek. Zet lager (20-30%) als hij te weinig laadt."
+      description: "Laad als prijs X% lager is dan de piek."
       default: 40
       selector:
         number:
@@ -226,9 +225,9 @@ trigger:
     id: "boost"
 
 action:
-  # --- STEP 1: VARIABLES ---
+  # --- STEP 1: VARIABLES & VALIDATION ---
   - variables:
-      language: !input language
+      # Inputs
       conf_soc_sensor: !input battery_soc_sensor
       conf_price_sensor: !input frank_price_sensor
       conf_last_price: !input last_price_helper
@@ -237,10 +236,10 @@ action:
       conf_target_num: !input target_soc_number
       conf_switch: !input battery_reserve_switch
       conf_sun: !input sun_entity
-      
       conf_p1: !input p1_power_sensor
       conf_bat_pow: !input battery_power_sensor
       
+      # Settings
       p_peak_count: !input peak_hours_count
       p_buffer_disc: !input buffer_discount_percentage
       p_min_discharge: !input min_discharge_margin
@@ -255,20 +254,32 @@ action:
       t_solar_th: !input summer_solar_threshold
       s_sol_today: !input solar_forecast_today
       s_sol_tom: !input solar_forecast_tomorrow
+      
+      language: !input language
 
-  # --- STEP 2: STATE ---
+  # --- STEP 2: STATE READING & PROTECTION ---
   - variables:
+      # Basic States
       current_soc: "{{ states(conf_soc_sensor) | float(0) }}"
-      current_price: "{{ states(conf_price_sensor) | float(0) }}"
       last_paid_price: "{{ states(conf_last_price) | float(0) }}"
       is_boost_active: "{{ conf_boost != [] and is_state(conf_boost, 'on') }}"
       has_notify_device: "{{ conf_notify != [] }}"
       now_ts: "{{ as_timestamp(now()) }}"
       is_daytime: "{{ is_state(conf_sun, 'above_horizon') }}"
+      
+      # SAFE PRICE READING: Prevents 0.0 during unavailable states
+      raw_price_state: "{{ states(conf_price_sensor) }}"
+      current_price: >-
+        {% if raw_price_state in ['unknown', 'unavailable', 'none'] %}
+          {{ last_paid_price }}
+        {% else %}
+          {{ raw_price_state | float(last_paid_price) }}
+        {% endif %}
 
-  # --- STEP 3: HYBRID COST ---
+  # --- STEP 3: HYBRID COST & GLITCH GUARD ---
   - variables:
-      current_charging_cost: >-
+      # Calculate effective cost (Grid + Solar mix)
+      calculated_cost: >-
         {% if conf_p1 != [] and conf_bat_pow != [] %}
            {% set grid_w = states(conf_p1) | float(0) %}
            {% set bat_w = states(conf_bat_pow) | float(0) %}
@@ -278,8 +289,17 @@ action:
              {{ current_price * ratio }}
            {% else %} {{ current_price }} {% endif %}
         {% else %} {{ current_price }} {% endif %}
+      
+      # THE GLITCH GUARD v2.2 (Negatives Allowed!)
+      # Valid if: Daytime OR (Nighttime AND Price is NOT exactly 0.0)
+      is_valid_price_update: >-
+        {% if is_daytime %}
+          true
+        {% else %}
+          {{ (calculated_cost | float) != 0 }}
+        {% endif %}
 
-  # --- STEP 4: PASSIVE SOLAR LOGIC (DRIFT FIX) ---
+  # --- STEP 4: PASSIVE SOLAR LOGIC ---
   - choose:
       - conditions:
           - condition: trigger
@@ -287,7 +307,7 @@ action:
           - condition: template
             value_template: "{{ trigger.to_state.state | float(0) > trigger.from_state.state | float(0) }}"
           - condition: template
-            value_template: "{{ is_daytime }}" # Only update solar price during day
+            value_template: "{{ is_daytime }}" 
           - condition: template
             value_template: >-
                {% set switch_on = is_state(conf_switch, 'on') %}
@@ -302,9 +322,17 @@ action:
                 {% set old_soc = trigger.from_state.state | float(0) %}
                 {% set new_soc = trigger.to_state.state | float(0) %}
                 {% set old_price = last_paid_price %}
-                {% if new_soc > 0 %}
-                  {{ (old_price * (old_soc / new_soc)) | round(4) }}
-                {% else %} {{ old_price }} {% endif %}
+                
+                {# Glitch Guard applied #}
+                {% if is_valid_price_update %}
+                   {% if new_soc > 0 %}
+                     {{ (old_price * (old_soc / new_soc)) | round(4) }}
+                   {% else %}
+                     {{ old_price }}
+                   {% endif %}
+                {% else %}
+                   {{ old_price }}
+                {% endif %}
           - stop: "Solar price update completed"
 
   # --- STEP 5: DATA PARSING ---
@@ -314,7 +342,7 @@ action:
         {% if raw %}
           {% set text = raw | string %}
           {% set matches = text | regex_findall(
-            "datetime\\.datetime\\((\\d+), (\\d+), (\\d+), (\\d+), (\\d+).*?price': ([0-9.]+)"
+            "datetime\\.datetime\\((\\d+), (\\d+), (\\d+), (\\d+), (\\d+).*?price': ([0-9.-]+)"
           ) %}
           [
           {%- for m in matches %}
@@ -366,8 +394,6 @@ action:
   - variables:
       sorted_all: "{{ filtered_data.all | sort }}"
       relevant_peak_price: "{{ filtered_data.peak }}"
-      
-      # BUFFER: Strict again (removed Average fallback)
       buffer_limit: "{{ relevant_peak_price | float * (1 - (p_buffer_disc | float / 100)) }}"
 
       forecast_tomorrow_val: "{{ states(s_sol_tom) | float(0) }}"
@@ -454,7 +480,7 @@ action:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
           
-          # UPDATE PRICE (Hybride)
+          # UPDATE PRICE (Using Glitch Guard)
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
@@ -463,10 +489,16 @@ action:
                 {% set cost_now = current_charging_cost | float(current_price) %}
                 {% set old_price = last_paid_price %}
                 {% set target = p_min_base_soc | float %}
-                {% if target > old_soc %}
-                  {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
+                
+                {# GLITCH CHECK #}
+                {% if is_valid_price_update %}
+                   {% if target > old_soc %}
+                     {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
+                   {% else %}
+                     {{ old_price }}
+                   {% endif %}
                 {% else %}
-                  {{ old_price }}
+                   {{ old_price }}
                 {% endif %}
 
       # --- PRIORITY 4: SMART CHARGING ---
@@ -504,7 +536,6 @@ action:
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
-              # NOTIFICATIE ALLEEN BIJ START
               - if:
                   - condition: template
                     value_template: "{{ has_notify_device }}"
@@ -514,7 +545,7 @@ action:
                     device_id: !input notify_device
                     message: "🟢 Start Laden (€{{ current_price | round(3) }})"
           
-          # UPDATE PRICE (Hybride)
+          # UPDATE PRICE (Using Glitch Guard)
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
@@ -523,10 +554,16 @@ action:
                 {% set cost_now = current_charging_cost | float(current_price) %}
                 {% set old_price = last_paid_price %}
                 {% set target = dynamic_target_soc %}
-                {% if target > old_soc %}
-                  {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
+                
+                {# GLITCH CHECK #}
+                {% if is_valid_price_update %}
+                   {% if target > old_soc %}
+                     {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
+                   {% else %}
+                     {% if cost_now < old_price %} {{ cost_now }} {% else %} {{ old_price }} {% endif %}
+                   {% endif %}
                 {% else %}
-                  {% if cost_now < old_price %} {{ cost_now }} {% else %} {{ old_price }} {% endif %}
+                   {{ old_price }}
                 {% endif %}
 
       # --- PRIORITY 5: DISCHARGING ---
