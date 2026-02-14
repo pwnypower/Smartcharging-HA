@@ -1,10 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v2.2 (Negative Support)"
+  name: "Frank Energie - Smart Battery Manager v2.3 (Anti-Spam)"
   description: >
-    **Fix v2.2:**
-    - **Negative Prices:** De blokkade voor prijzen < 0.01 is verwijderd. Negatieve prijzen (geld toe) worden nu correct verwerkt.
-    - **Glitch Guard:** Blokkeert alleen nog EXACT 0.0 tijdens de nacht (om API crashes te filteren).
-    - Bevat alle eerdere fixes.
+    **Fix v2.3:**
+    - **Anti-Spam Engine:** Notificaties zijn nu logica-gedreven in plaats van hardware-gedreven. Je krijgt gegarandeerd nog maar 1 notificatie per laad/ontlaad sessie.
+    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, Strict Buffer).
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -259,7 +258,6 @@ action:
 
   # --- STEP 2: STATE READING & PROTECTION ---
   - variables:
-      # Basic States
       current_soc: "{{ states(conf_soc_sensor) | float(0) }}"
       last_paid_price: "{{ states(conf_last_price) | float(0) }}"
       is_boost_active: "{{ conf_boost != [] and is_state(conf_boost, 'on') }}"
@@ -267,7 +265,7 @@ action:
       now_ts: "{{ as_timestamp(now()) }}"
       is_daytime: "{{ is_state(conf_sun, 'above_horizon') }}"
       
-      # SAFE PRICE READING: Prevents 0.0 during unavailable states
+      # SAFE PRICE READING
       raw_price_state: "{{ states(conf_price_sensor) }}"
       current_price: >-
         {% if raw_price_state in ['unknown', 'unavailable', 'none'] %}
@@ -278,7 +276,6 @@ action:
 
   # --- STEP 3: HYBRID COST & GLITCH GUARD ---
   - variables:
-      # Calculate effective cost (Grid + Solar mix)
       calculated_cost: >-
         {% if conf_p1 != [] and conf_bat_pow != [] %}
            {% set grid_w = states(conf_p1) | float(0) %}
@@ -290,8 +287,7 @@ action:
            {% else %} {{ current_price }} {% endif %}
         {% else %} {{ current_price }} {% endif %}
       
-      # THE GLITCH GUARD v2.2 (Negatives Allowed!)
-      # Valid if: Daytime OR (Nighttime AND Price is NOT exactly 0.0)
+      # THE GLITCH GUARD v2.2/2.3 (Negatives Allowed!)
       is_valid_price_update: >-
         {% if is_daytime %}
           true
@@ -322,8 +318,6 @@ action:
                 {% set old_soc = trigger.from_state.state | float(0) %}
                 {% set new_soc = trigger.to_state.state | float(0) %}
                 {% set old_price = last_paid_price %}
-                
-                {# Glitch Guard applied #}
                 {% if is_valid_price_update %}
                    {% if new_soc > 0 %}
                      {{ (old_price * (old_soc / new_soc)) | round(4) }}
@@ -468,11 +462,21 @@ action:
         sequence:
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ p_min_base_soc }}"}
+              # ANTI-SPAM NOTIFICATIE
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
+
           - if:
               - condition: template
                 value_template: "{{ is_state(conf_switch, 'off') }}"
@@ -480,7 +484,7 @@ action:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
           
-          # UPDATE PRICE (Using Glitch Guard)
+          # UPDATE PRICE
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
@@ -490,7 +494,6 @@ action:
                 {% set old_price = last_paid_price %}
                 {% set target = p_min_base_soc | float %}
                 
-                {# GLITCH CHECK #}
                 {% if is_valid_price_update %}
                    {% if target > old_soc %}
                      {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
@@ -523,6 +526,7 @@ action:
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
         sequence:
+          # ANTI-SPAM LOGICA: Deze check vuurt de notificatie uitsluitend bij de shift naar Charging!
           - if:
               - condition: template
                 value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
@@ -530,12 +534,6 @@ action:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ dynamic_target_soc }}"}
-          - if:
-              - condition: template
-                value_template: "{{ is_state(conf_switch, 'off') }}"
-            then:
-              - service: switch.turn_on
-                target: {entity_id: !input battery_reserve_switch}
               - if:
                   - condition: template
                     value_template: "{{ has_notify_device }}"
@@ -544,8 +542,15 @@ action:
                     type: notify
                     device_id: !input notify_device
                     message: "🟢 Start Laden (€{{ current_price | round(3) }})"
+
+          - if:
+              - condition: template
+                value_template: "{{ is_state(conf_switch, 'off') }}"
+            then:
+              - service: switch.turn_on
+                target: {entity_id: !input battery_reserve_switch}
           
-          # UPDATE PRICE (Using Glitch Guard)
+          # UPDATE PRICE
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
             data:
@@ -555,7 +560,6 @@ action:
                 {% set old_price = last_paid_price %}
                 {% set target = dynamic_target_soc %}
                 
-                {# GLITCH CHECK #}
                 {% if is_valid_price_update %}
                    {% if target > old_soc %}
                      {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
@@ -578,6 +582,23 @@ action:
             then:
               - service: switch.turn_off
                 target: {entity_id: !input battery_reserve_switch}
+          
+          # ANTI-SPAM NOTIFICATIE + ANCHOR RESET
+          - if:
+              - condition: template
+                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
+            then:
+              - service: number.set_value
+                target: {entity_id: !input target_soc_number}
+                data: {value: "{{ p_min_base_soc }}"}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🔵 Start Ontladen (€{{ current_price | round(3) }})"
 
       # --- PRIORITY 6: SMART HOLD ---
       - alias: "6. Smart Hold"
@@ -597,7 +618,7 @@ action:
                 target: {entity_id: !input battery_reserve_switch}
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - current_soc) > 1 }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - current_soc)|abs > 5 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
