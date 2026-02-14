@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v2.3 (Anti-Spam)"
+  name: "Frank Energie - Smart Battery Manager v2.5 (Target Sync)"
   description: >
-    **Fix v2.3:**
-    - **Anti-Spam Engine:** Notificaties zijn nu logica-gedreven in plaats van hardware-gedreven. Je krijgt gegarandeerd nog maar 1 notificatie per laad/ontlaad sessie.
-    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, Strict Buffer).
+    **Fix v2.5:**
+    - **Target Sync Fix:** Trekt de Target SoC (Backup SoC) nu weer correct omlaag naar het minimum tijdens de Ontlaad-fase (Priority 5), zónder dat dit leidt tot notificatie-spam.
+    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, State-Tracking Anti-Spam).
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -287,7 +287,7 @@ action:
            {% else %} {{ current_price }} {% endif %}
         {% else %} {{ current_price }} {% endif %}
       
-      # THE GLITCH GUARD v2.2/2.3 (Negatives Allowed!)
+      # THE GLITCH GUARD (Negatives Allowed)
       is_valid_price_update: >-
         {% if is_daytime %}
           true
@@ -460,29 +460,33 @@ action:
           - condition: template
             value_template: "{{ current_price < (p_max_cap | float * 1.5) }}"
         sequence:
+          - variables:
+              was_off: "{{ is_state(conf_switch, 'off') }}"
+              target_needs_update: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 1.5 }}"
+              
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
+                value_template: "{{ target_needs_update }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ p_min_base_soc }}"}
-              # ANTI-SPAM NOTIFICATIE
-              - if:
-                  - condition: template
-                    value_template: "{{ has_notify_device }}"
-                then:
-                  - domain: mobile_app
-                    type: notify
-                    device_id: !input notify_device
-                    message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
-
+          
           - if:
               - condition: template
-                value_template: "{{ is_state(conf_switch, 'off') }}"
+                value_template: "{{ was_off }}"
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
+          
+          - if:
+              - condition: template
+                value_template: "{{ has_notify_device and was_off }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
           
           # UPDATE PRICE
           - service: input_number.set_value
@@ -526,29 +530,33 @@ action:
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
         sequence:
-          # ANTI-SPAM LOGICA: Deze check vuurt de notificatie uitsluitend bij de shift naar Charging!
+          - variables:
+              was_off: "{{ is_state(conf_switch, 'off') }}"
+              target_needs_update: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 1.5 }}"
+              
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
+                value_template: "{{ target_needs_update }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ dynamic_target_soc }}"}
-              - if:
-                  - condition: template
-                    value_template: "{{ has_notify_device }}"
-                then:
-                  - domain: mobile_app
-                    type: notify
-                    device_id: !input notify_device
-                    message: "🟢 Start Laden (€{{ current_price | round(3) }})"
-
+                
           - if:
               - condition: template
-                value_template: "{{ is_state(conf_switch, 'off') }}"
+                value_template: "{{ was_off }}"
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
+                
+          - if:
+              - condition: template
+                value_template: "{{ has_notify_device and was_off }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                message: "🟢 Start Laden (€{{ current_price | round(3) }})"
           
           # UPDATE PRICE
           - service: input_number.set_value
@@ -576,21 +584,25 @@ action:
           - condition: template
             value_template: "{{ current_price >= discharge_start_price }}"
         sequence:
+          - variables:
+              was_on: "{{ is_state(conf_switch, 'on') }}"
+              target_needs_update: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 1.5 }}"
+              
+          # Trekt de Backup SoC stilletjes naar beneden voor een correct dashboard / limiet 
           - if:
               - condition: template
-                value_template: "{{ is_state(conf_switch, 'on') }}"
-            then:
-              - service: switch.turn_off
-                target: {entity_id: !input battery_reserve_switch}
-          
-          # ANTI-SPAM NOTIFICATIE + ANCHOR RESET
-          - if:
-              - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
+                value_template: "{{ target_needs_update }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
-                data: {value: "{{ p_min_base_soc }}"}
+                data: {value: "{{ p_min_base_soc | int }}"}
+
+          - if:
+              - condition: template
+                value_template: "{{ was_on }}"
+            then:
+              - service: switch.turn_off
+                target: {entity_id: !input battery_reserve_switch}
               - if:
                   - condition: template
                     value_template: "{{ has_notify_device }}"
@@ -610,19 +622,33 @@ action:
           - condition: template
             value_template: "{{ current_soc > p_min_base_soc | float }}"
         sequence:
+          - variables:
+              was_off: "{{ is_state(conf_switch, 'off') }}"
+              target_needs_update: "{{ (states(conf_target_num)|float(0) - current_soc)|abs > 1.5 }}"
+              
           - if:
               - condition: template
-                value_template: "{{ is_state(conf_switch, 'off') }}"
+                value_template: "{{ was_off }}"
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
+                
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - current_soc)|abs > 5 }}"
+                value_template: "{{ target_needs_update }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ current_soc | int }}"}
+                
+          - if:
+              - condition: template
+                value_template: "{{ has_notify_device and was_off }}"
+            then:
+              - domain: mobile_app
+                type: notify
+                device_id: !input notify_device
+                message: "🟡 Smart Hold (Wachten op betere prijs)"
 
     # --- PRIORITY 7: DEFAULT ---
     default:
