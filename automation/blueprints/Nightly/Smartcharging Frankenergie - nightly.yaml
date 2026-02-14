@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v2.5 (Target Sync)"
+  name: "Frank Energie - Smart Battery Manager v2.6 (Clean Discharge)"
   description: >
-    **Fix v2.5:**
-    - **Target Sync Fix:** Trekt de Target SoC (Backup SoC) nu weer correct omlaag naar het minimum tijdens de Ontlaad-fase (Priority 5), zónder dat dit leidt tot notificatie-spam.
-    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, State-Tracking Anti-Spam).
+    **Fix v2.6:**
+    - **Clean Discharge:** Tijdens het ontladen (Priority 5) wordt de Target SoC niet meer onnodig aangepast. Dit is efficiënter omdat de omvormer dit getal toch negeert wanneer de reserve-schakelaar UIT staat.
+    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, Anti-Spam).
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -287,7 +287,7 @@ action:
            {% else %} {{ current_price }} {% endif %}
         {% else %} {{ current_price }} {% endif %}
       
-      # THE GLITCH GUARD (Negatives Allowed)
+      # THE GLITCH GUARD
       is_valid_price_update: >-
         {% if is_daytime %}
           true
@@ -586,17 +586,7 @@ action:
         sequence:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
-              target_needs_update: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 1.5 }}"
               
-          # Trekt de Backup SoC stilletjes naar beneden voor een correct dashboard / limiet 
-          - if:
-              - condition: template
-                value_template: "{{ target_needs_update }}"
-            then:
-              - service: number.set_value
-                target: {entity_id: !input target_soc_number}
-                data: {value: "{{ p_min_base_soc | int }}"}
-
           - if:
               - condition: template
                 value_template: "{{ was_on }}"
