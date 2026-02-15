@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v2.6 (Clean Discharge)"
+  name: "Frank Energie - Smart Battery Manager v3.0 (The Math Fix)"
   description: >
-    **Fix v2.6:**
-    - **Clean Discharge:** Tijdens het ontladen (Priority 5) wordt de Target SoC niet meer onnodig aangepast. Dit is efficiënter omdat de omvormer dit getal toch negeert wanneer de reserve-schakelaar UIT staat.
-    - Bevat alle eerdere fixes (Glitch Guard, Negative Prices, Anti-Spam).
+    **Fix v3.0:**
+    - **The Math Fix:** De exponentiële 'decay' bug in de hybride laadformule is volledig verwijderd. De gemiddelde laadprijs wordt nu uitsluitend berekend via een Universele Intercept bij een daadwerkelijke SoC-stijging. Dit is 100% accuraat voor zowel grid, pure zon, als hybride scenario's.
+    - Hiermee is de onterecht lage verkoopdrempel en het resulterende Ping-Pong effect (Klapperen van het relais) opgelost.
     
     STRATEGY: Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -226,7 +226,7 @@ trigger:
 action:
   # --- STEP 1: VARIABLES & VALIDATION ---
   - variables:
-      # Inputs
+      language: !input language
       conf_soc_sensor: !input battery_soc_sensor
       conf_price_sensor: !input frank_price_sensor
       conf_last_price: !input last_price_helper
@@ -238,7 +238,6 @@ action:
       conf_p1: !input p1_power_sensor
       conf_bat_pow: !input battery_power_sensor
       
-      # Settings
       p_peak_count: !input peak_hours_count
       p_buffer_disc: !input buffer_discount_percentage
       p_min_discharge: !input min_discharge_margin
@@ -253,8 +252,6 @@ action:
       t_solar_th: !input summer_solar_threshold
       s_sol_today: !input solar_forecast_today
       s_sol_tom: !input solar_forecast_tomorrow
-      
-      language: !input language
 
   # --- STEP 2: STATE READING & PROTECTION ---
   - variables:
@@ -265,7 +262,6 @@ action:
       now_ts: "{{ as_timestamp(now()) }}"
       is_daytime: "{{ is_state(conf_sun, 'above_horizon') }}"
       
-      # SAFE PRICE READING
       raw_price_state: "{{ states(conf_price_sensor) }}"
       current_price: >-
         {% if raw_price_state in ['unknown', 'unavailable', 'none'] %}
@@ -276,7 +272,9 @@ action:
 
   # --- STEP 3: HYBRID COST & GLITCH GUARD ---
   - variables:
-      calculated_cost: >-
+      # Berekent de ware kosten van 1kWh (Grid prijs of Gratis Zon)
+      current_charging_cost: >-
+        {% set is_active = is_state(conf_switch, 'on') %}
         {% if conf_p1 != [] and conf_bat_pow != [] %}
            {% set grid_w = states(conf_p1) | float(0) %}
            {% set bat_w = states(conf_bat_pow) | float(0) %}
@@ -284,32 +282,21 @@ action:
              {% set grid_import = [grid_w, 0] | max %}
              {% set ratio = [ (grid_import / bat_w), 1.0 ] | min %}
              {{ current_price * ratio }}
-           {% else %} {{ current_price }} {% endif %}
-        {% else %} {{ current_price }} {% endif %}
-      
-      # THE GLITCH GUARD
-      is_valid_price_update: >-
-        {% if is_daytime %}
-          true
+           {% else %}
+             {{ current_price if is_active else 0.0 }}
+           {% endif %}
         {% else %}
-          {{ (calculated_cost | float) != 0 }}
+           {{ current_price if is_active else 0.0 }}
         {% endif %}
 
-  # --- STEP 4: PASSIVE SOLAR LOGIC ---
+  # --- STEP 4: UNIVERSAL PRICE ENGINE (NEW) ---
   - choose:
       - conditions:
           - condition: trigger
             id: "soc_change"
+          # Alleen updaten als de batterij daadwerkelijk is opgeladen
           - condition: template
             value_template: "{{ trigger.to_state.state | float(0) > trigger.from_state.state | float(0) }}"
-          - condition: template
-            value_template: "{{ is_daytime }}" 
-          - condition: template
-            value_template: >-
-               {% set switch_on = is_state(conf_switch, 'on') %}
-               {% set target = states(conf_target_num) | float(0) %}
-               {% set start_soc = trigger.from_state.state | float(0) %}
-               {% if not switch_on %} true {% else %} {{ target <= (start_soc + 1.0) }} {% endif %}
         sequence:
           - service: input_number.set_value
             target: {entity_id: !input last_price_helper}
@@ -317,17 +304,22 @@ action:
               value: >-
                 {% set old_soc = trigger.from_state.state | float(0) %}
                 {% set new_soc = trigger.to_state.state | float(0) %}
+                {% set diff = new_soc - old_soc %}
                 {% set old_price = last_paid_price %}
-                {% if is_valid_price_update %}
+                {% set cost = current_charging_cost | float(current_price) %}
+                
+                {# Glitch Guard: Block exactly 0.0 when it is night (API Error) #}
+                {% if not is_daytime and cost == 0 %}
+                   {{ old_price }}
+                {% else %}
                    {% if new_soc > 0 %}
-                     {{ (old_price * (old_soc / new_soc)) | round(4) }}
+                     {{ (((old_soc * old_price) + (diff * cost)) / new_soc) | round(4) }}
                    {% else %}
                      {{ old_price }}
                    {% endif %}
-                {% else %}
-                   {{ old_price }}
                 {% endif %}
-          - stop: "Solar price update completed"
+          # Zeer belangrijk: Stop de verdere verwerking, want dit was slechts een data-update
+          - stop: "Prijs succesvol geüpdatet via SOC stijging."
 
   # --- STEP 5: DATA PARSING ---
   - variables:
@@ -411,7 +403,7 @@ action:
         {% else %} -999 {% endif %}
       discharge_start_price: "{{ last_paid_price * (1 + (p_min_discharge | float / 100)) }}"
 
-  # --- STEP 8: EXECUTION ---
+  # --- STEP 8: EXECUTION (STATE ENGINE) ---
   - choose:
       # --- PRIORITY 1: REPORTING ---
       - alias: "1. Send Report"
@@ -462,11 +454,10 @@ action:
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
-              target_needs_update: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 1.5 }}"
-              
+          
           - if:
               - condition: template
-                value_template: "{{ target_needs_update }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
@@ -478,35 +469,14 @@ action:
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
-          
-          - if:
-              - condition: template
-                value_template: "{{ has_notify_device and was_off }}"
-            then:
-              - domain: mobile_app
-                type: notify
-                device_id: !input notify_device
-                message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
-          
-          # UPDATE PRICE
-          - service: input_number.set_value
-            target: {entity_id: !input last_price_helper}
-            data:
-              value: >-
-                {% set old_soc = current_soc %}
-                {% set cost_now = current_charging_cost | float(current_price) %}
-                {% set old_price = last_paid_price %}
-                {% set target = p_min_base_soc | float %}
-                
-                {% if is_valid_price_update %}
-                   {% if target > old_soc %}
-                     {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
-                   {% else %}
-                     {{ old_price }}
-                   {% endif %}
-                {% else %}
-                   {{ old_price }}
-                {% endif %}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
 
       # --- PRIORITY 4: SMART CHARGING ---
       - alias: "4. Smart Charging"
@@ -518,7 +488,7 @@ action:
                   - condition: template
                     value_template: "{{ current_price <= charge_limit_strict }}"
                   - condition: template
-                    value_template: "{{ current_soc < dynamic_target_soc | float }}"
+                    value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
               - condition: and
@@ -526,17 +496,16 @@ action:
                   - condition: template
                     value_template: "{{ current_price <= buffer_limit }}"
                   - condition: template
-                    value_template: "{{ current_soc < dynamic_target_soc | float }}"
+                    value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
-              target_needs_update: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 1.5 }}"
               
           - if:
               - condition: template
-                value_template: "{{ target_needs_update }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
@@ -548,41 +517,23 @@ action:
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
-                
-          - if:
-              - condition: template
-                value_template: "{{ has_notify_device and was_off }}"
-            then:
-              - domain: mobile_app
-                type: notify
-                device_id: !input notify_device
-                message: "🟢 Start Laden (€{{ current_price | round(3) }})"
-          
-          # UPDATE PRICE
-          - service: input_number.set_value
-            target: {entity_id: !input last_price_helper}
-            data:
-              value: >-
-                {% set old_soc = current_soc %}
-                {% set cost_now = current_charging_cost | float(current_price) %}
-                {% set old_price = last_paid_price %}
-                {% set target = dynamic_target_soc %}
-                
-                {% if is_valid_price_update %}
-                   {% if target > old_soc %}
-                     {{ ((old_soc * old_price) + ((target - old_soc) * cost_now)) / target }}
-                   {% else %}
-                     {% if cost_now < old_price %} {{ cost_now }} {% else %} {{ old_price }} {% endif %}
-                   {% endif %}
-                {% else %}
-                   {{ old_price }}
-                {% endif %}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🟢 Start Laden (€{{ current_price | round(3) }})"
 
       # --- PRIORITY 5: DISCHARGING ---
       - alias: "5. Discharging"
         conditions:
           - condition: template
             value_template: "{{ current_price >= discharge_start_price }}"
+          # OFF-PEAK BLOCKER
+          - condition: template
+            value_template: "{{ current_price > buffer_limit }}"
         sequence:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
@@ -614,7 +565,6 @@ action:
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
-              target_needs_update: "{{ (states(conf_target_num)|float(0) - current_soc)|abs > 1.5 }}"
               
           - if:
               - condition: template
@@ -622,23 +572,22 @@ action:
             then:
               - service: switch.turn_on
                 target: {entity_id: !input battery_reserve_switch}
-                
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "🟡 Smart Hold (Wachten op betere prijs)"
+                    
           - if:
               - condition: template
-                value_template: "{{ target_needs_update }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - current_soc)|abs > 1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
                 data: {value: "{{ current_soc | int }}"}
-                
-          - if:
-              - condition: template
-                value_template: "{{ has_notify_device and was_off }}"
-            then:
-              - domain: mobile_app
-                type: notify
-                device_id: !input notify_device
-                message: "🟡 Smart Hold (Wachten op betere prijs)"
 
     # --- PRIORITY 7: DEFAULT ---
     default:
