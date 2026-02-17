@@ -1,10 +1,8 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v3.1 (Smart Discharge)"
+  name: "Frank Energie - Smart Battery Manager v3.2 (Cycle Splitter)"
   description: >
-    **Fix v3.1:**
-    - **Smart Discharge (Top-N):** De ontlaad-grens kijkt nu voorspellend naar de komende 12 uur. 
-      Hij berekent hoeveel uur je batterij nodig heeft om leeg te lopen, pakt de allerduurste 
-      piek-uren voor die periode, en verhoogt automatisch je ontlaaddrempel om je winst te maximaliseren!
+    **Fix v3.2:**
+    - **Cycle Splitter:** De voorspellende horizon is gesplitst. 12 uur lookahead voor inkopen (vindt het absolute dal), maar maximaal 6 uur lookahead voor verkopen. Dit voorkomt dat het systeem 's avonds niet wil verkopen omdat hij wacht op de ochtendpiek, terwijl hij in de tussentijd 's nachts nog een keer had kunnen herladen.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -348,31 +346,35 @@ action:
           ]
         {% else %} [] {% endif %}
 
-  # --- STEP 6: FILTER & ANALYZE ---
+  # --- STEP 6: FILTER & ANALYZE (CYCLE SPLITTER) ---
   - variables:
       filtered_data: >-
-        {% set output = namespace(all_prices=[], future_slots=[], short_term_prices=[]) %}
+        {% set output = namespace(all_prices=[], future_slots=[], charge_prices=[], discharge_prices=[]) %}
         {% set history_cutoff = now_ts - 3600 %}
-        {% set rolling_cutoff = now_ts + (12 * 3600) %}
+        {% set charge_lookahead = now_ts + (12 * 3600) %}
+        {% set discharge_lookahead = now_ts + (6 * 3600) %}
         {% if prices_json %}
            {% for item in prices_json %}
               {% if item.ts >= history_cutoff %}
                   {% set output.all_prices = output.all_prices + [item.price] %}
                   {% set output.future_slots = output.future_slots + [item] %}
-                  {% if item.ts <= rolling_cutoff %}
-                     {% set output.short_term_prices = output.short_term_prices + [item.price] %}
+                  {% if item.ts <= charge_lookahead %}
+                     {% set output.charge_prices = output.charge_prices + [item.price] %}
+                  {% endif %}
+                  {% if item.ts <= discharge_lookahead %}
+                     {% set output.discharge_prices = output.discharge_prices + [item.price] %}
                   {% endif %}
               {% endif %}
            {% endfor %}
         {% endif %}
         {% set pk_count = p_peak_count | int %}
-        {% set sorted_short = output.short_term_prices | sort(reverse=True) %}
+        {% set sorted_charge = output.charge_prices | sort(reverse=True) %}
         {% set rolling_peak = 0 %}
-        {% if sorted_short | length > 0 %}
-           {% set count = [sorted_short|length, pk_count] | min %}
-           {% set rolling_peak = (sorted_short[:count] | sum / count) %}
+        {% if sorted_charge | length > 0 %}
+           {% set count = [sorted_charge|length, pk_count] | min %}
+           {% set rolling_peak = (sorted_charge[:count] | sum / count) %}
         {% endif %}
-        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "short_term": {{ output.short_term_prices }} }
+        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "discharge_term": {{ output.discharge_prices }} }
 
   # --- STEP 7: DERIVED VARIABLES ---
   - variables:
@@ -400,7 +402,7 @@ action:
            {% else %} -999 {% endif %}
         {% else %} -999 {% endif %}
         
-      # SMART DISCHARGE: Combineert absolute minimum marge met de Top-N duurste uren van de avond
+      # SMART DISCHARGE met 6-uur horizon
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
         {% set available_soc = current_soc - (p_min_base_soc | float) %}
@@ -408,7 +410,7 @@ action:
            {% set kwh_avail = (available_soc / 100.0) * (p_bat_cap | float) %}
            {% set hours_to_empty = (kwh_avail / (p_charge_kw | float)) | round(0, 'ceil') | int %}
            {% set hours_to_empty = [hours_to_empty, 1] | max %}
-           {% set reverse_sorted = filtered_data.short_term | sort(reverse=True) %}
+           {% set reverse_sorted = filtered_data.discharge_term | sort(reverse=True) %}
            {% if reverse_sorted | length > 0 %}
              {% set idx = (hours_to_empty - 1) if (hours_to_empty - 1) < reverse_sorted|length else (reverse_sorted|length - 1) %}
              {% set optimal_price = reverse_sorted[idx] %}
