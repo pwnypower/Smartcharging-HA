@@ -1,8 +1,8 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v3.2 (Cycle Splitter)"
+  name: "Frank Energie - Smart Battery Manager v3.5 (Rounding Tolerance)"
   description: >
-    **Fix v3.2:**
-    - **Cycle Splitter:** De voorspellende horizon is gesplitst. 12 uur lookahead voor inkopen (vindt het absolute dal), maar maximaal 6 uur lookahead voor verkopen. Dit voorkomt dat het systeem 's avonds niet wil verkopen omdat hij wacht op de ochtendpiek, terwijl hij in de tussentijd 's nachts nog een keer had kunnen herladen.
+    **Fix v3.5:**
+    - **Rounding Tolerance:** Verhelpt een bug waarbij het systeem niet ontlaadde of laadde omdat de live sensorwaarde op 0.0001 cent afweek van de geplande uurwaarde uit de API. Vergelijkingen worden nu veilig op 3 decimalen afgerond.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -88,7 +88,6 @@ blueprint:
           unit_of_measurement: "%"
     min_discharge_margin:
       name: "Min. Discharge Profit (%)"
-      description: "Absolute minimum winst. Door Smart Discharge wordt de grens vaak automatisch veel hoger gelegd."
       default: 20
       selector:
         number:
@@ -163,12 +162,20 @@ blueprint:
           max: 100
           step: 0.1
     charge_power_kw:
-      name: "Charge/Discharge Speed (kW)"
+      name: "Charge Speed (kW)"
       default: 3.0
       selector:
         number:
           min: 0.1
           max: 22
+          step: 0.1
+    avg_consumption_kw:
+      name: "Average House Load (kW)"
+      default: 0.4
+      selector:
+        number:
+          min: 0.1
+          max: 10.0
           step: 0.1
     safety_factor:
       name: "BMS Safety Factor"
@@ -243,6 +250,7 @@ action:
       p_min_discharge: !input min_discharge_margin
       p_bat_cap: !input battery_capacity_kwh
       p_charge_kw: !input charge_power_kw
+      p_avg_consumption_kw: !input avg_consumption_kw
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
@@ -346,13 +354,14 @@ action:
           ]
         {% else %} [] {% endif %}
 
-  # --- STEP 6: FILTER & ANALYZE (CYCLE SPLITTER) ---
+  # --- STEP 6: FILTER & ANALYZE ---
   - variables:
       filtered_data: >-
         {% set output = namespace(all_prices=[], future_slots=[], charge_prices=[], discharge_prices=[]) %}
         {% set history_cutoff = now_ts - 3600 %}
         {% set charge_lookahead = now_ts + (12 * 3600) %}
-        {% set discharge_lookahead = now_ts + (6 * 3600) %}
+        {% set discharge_lookahead = now_ts + (8 * 3600) %} 
+        
         {% if prices_json %}
            {% for item in prices_json %}
               {% if item.ts >= history_cutoff %}
@@ -402,18 +411,20 @@ action:
            {% else %} -999 {% endif %}
         {% else %} -999 {% endif %}
         
-      # SMART DISCHARGE met 6-uur horizon
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
-        {% set available_soc = current_soc - (p_min_base_soc | float) %}
-        {% if available_soc > 0 %}
-           {% set kwh_avail = (available_soc / 100.0) * (p_bat_cap | float) %}
-           {% set hours_to_empty = (kwh_avail / (p_charge_kw | float)) | round(0, 'ceil') | int %}
-           {% set hours_to_empty = [hours_to_empty, 1] | max %}
+        {% set usable_soc = current_soc - (p_min_base_soc | float) %}
+        {% set total_usable = 100.0 - (p_min_base_soc | float) %}
+        
+        {% if usable_soc > 0 and total_usable > 0 %}
+           {% set ratio = usable_soc / total_usable %}
            {% set reverse_sorted = filtered_data.discharge_term | sort(reverse=True) %}
-           {% if reverse_sorted | length > 0 %}
-             {% set idx = (hours_to_empty - 1) if (hours_to_empty - 1) < reverse_sorted|length else (reverse_sorted|length - 1) %}
-             {% set optimal_price = reverse_sorted[idx] %}
+           {% set lookahead_len = reverse_sorted | length %}
+           
+           {% if lookahead_len > 0 %}
+             {% set allowed_hours = (ratio * lookahead_len) | round(0, 'ceil') | int %}
+             {% set allowed_hours = [allowed_hours, 1] | max %}
+             {% set optimal_price = reverse_sorted[allowed_hours - 1] %}
              {{ [base_margin_price, optimal_price] | max }}
            {% else %}
              {{ base_margin_price }}
@@ -504,16 +515,18 @@ action:
             conditions:
               - condition: and
                 conditions:
+                  # FIX: Afrondingstolerantie voor laadgrens
                   - condition: template
-                    value_template: "{{ current_price <= charge_limit_strict }}"
+                    value_template: "{{ current_price | round(3) <= charge_limit_strict | round(3) }}"
                   - condition: template
                     value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
               - condition: and
                 conditions:
+                  # FIX: Afrondingstolerantie voor buffer
                   - condition: template
-                    value_template: "{{ current_price <= buffer_limit }}"
+                    value_template: "{{ current_price | round(3) <= buffer_limit | round(3) }}"
                   - condition: template
                     value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
@@ -548,8 +561,11 @@ action:
       # --- PRIORITY 5: DISCHARGING ---
       - alias: "5. Discharging"
         conditions:
+          # FIX: Afrondingstolerantie. 0.26186 wordt netjes afgerond naar 0.262!
           - condition: template
-            value_template: "{{ current_price >= discharge_start_price }}"
+            value_template: "{{ current_price | round(3) >= discharge_start_price | round(3) }}"
+          - condition: template
+            value_template: "{{ current_price | round(3) > buffer_limit | round(3) }}"
         sequence:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
@@ -573,9 +589,9 @@ action:
       - alias: "6. Smart Hold"
         conditions:
           - condition: template
-            value_template: "{{ current_price > charge_limit_strict }}"
+            value_template: "{{ current_price | round(3) > charge_limit_strict | round(3) }}"
           - condition: template
-            value_template: "{{ current_price < discharge_start_price }}"
+            value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
           - condition: template
             value_template: "{{ current_soc > p_min_base_soc | float }}"
         sequence:
