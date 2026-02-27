@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v4.1 (Elastic Hysteresis)"
+  name: "Frank Energie - Smart Battery Manager v6.1 (Sticky Thresholds)"
   description: >
-    **Fix v4.1:**
-    - **Elastic Hysteresis:** Voegt een virtuele 'deadband' van 2% toe aan het dynamische Elastic Horizon algoritme. Dit voorkomt dat het systeem gaat 'ping-pongen' op de grens van een veranderend procentpunt. Zodra het ontladen start, houdt hij de drempel vast.
-    - Bevat de drastische EEPROM Saver uit v4.0.
+    **Fix v6.1:**
+    - **Sticky Thresholds:** Voegt een 'plakkerige' marge van €0.02 toe tijdens het ontladen. Zodra de batterij begint met leveren, negeert hij kleine drempelfluctuaties (veroorzaakt door het dalende SoC) om te voorkomen dat de schakelaar halverwege het uur zenuwachtig in en uit schakelt.
+    - Resultaat: Drastisch minder onnodige schakelmomenten en perfecte rust binnen een tarief-uur.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -54,7 +54,30 @@ blueprint:
         entity:
           domain: sun
 
-    # --- POWER SENSORS (Optioneel) ---
+    # --- FORECASTING & POWER ---
+    dynamic_consumption_sensor:
+      name: "Sensor: Expected Daily Consumption (kWh) [OPTIONEEL]"
+      default: []
+      selector:
+        entity:
+          domain: sensor
+          device_class: energy
+    active_discharge_hours:
+      name: "Active Discharge Hours (Concentrated Load)"
+      default: 16
+      selector:
+        number:
+          min: 8
+          max: 24
+          step: 1
+    avg_consumption_kw:
+      name: "Fallback Average House Load (kW)"
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 10.0
+          step: 0.1
     p1_power_sensor:
       name: "Sensor: P1 Grid Import (Watt)"
       default: []
@@ -80,7 +103,6 @@ blueprint:
           max: 6
     buffer_discount_percentage:
       name: "Buffer Discount (%)"
-      description: "Laad als prijs X% lager is dan de piek."
       default: 40
       selector:
         number:
@@ -89,7 +111,6 @@ blueprint:
           unit_of_measurement: "%"
     min_discharge_margin:
       name: "Min. Discharge Profit (%)"
-      description: "Absolute minimum winst. Door Smart Discharge wordt de grens vaak automatisch hoger gelegd."
       default: 20
       selector:
         number:
@@ -171,14 +192,6 @@ blueprint:
           min: 0.1
           max: 22
           step: 0.1
-    avg_consumption_kw:
-      name: "Average House Load (kW)"
-      default: 0.4
-      selector:
-        number:
-          min: 0.1
-          max: 10.0
-          step: 0.1
     safety_factor:
       name: "BMS Safety Factor"
       default: 1.5
@@ -247,12 +260,15 @@ action:
       conf_p1: !input p1_power_sensor
       conf_bat_pow: !input battery_power_sensor
       
+      conf_dynamic_cons: !input dynamic_consumption_sensor
+      p_active_hours: !input active_discharge_hours
+      
       p_peak_count: !input peak_hours_count
       p_buffer_disc: !input buffer_discount_percentage
       p_min_discharge: !input min_discharge_margin
       p_bat_cap: !input battery_capacity_kwh
       p_charge_kw: !input charge_power_kw
-      p_avg_consumption_kw: !input avg_consumption_kw
+      p_fallback_avg_kw: !input avg_consumption_kw
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
@@ -263,7 +279,7 @@ action:
       s_sol_today: !input solar_forecast_today
       s_sol_tom: !input solar_forecast_tomorrow
 
-  # --- STEP 2: STATE READING & PROTECTION ---
+  # --- STEP 2: STATE READING & DYNAMIC FORECASTING ---
   - variables:
       current_soc: "{{ states(conf_soc_sensor) | float(0) }}"
       last_paid_price: "{{ states(conf_last_price) | float(0) }}"
@@ -278,6 +294,19 @@ action:
           {{ last_paid_price }}
         {% else %}
           {{ raw_price_state | float(last_paid_price) }}
+        {% endif %}
+        
+      calculated_avg_kw: >-
+        {% if conf_dynamic_cons != [] and states(conf_dynamic_cons) not in ['unknown', 'unavailable', 'none'] %}
+          {% set daily_kwh = states(conf_dynamic_cons) | float(0) %}
+          {% set active_h = p_active_hours | float(16) %}
+          {% if daily_kwh > 0 %}
+            {{ (daily_kwh / active_h) | round(2) }}
+          {% else %}
+            {{ p_fallback_avg_kw }}
+          {% endif %}
+        {% else %}
+          {{ p_fallback_avg_kw }}
         {% endif %}
 
   # --- STEP 3: HYBRID COST ---
@@ -359,10 +388,9 @@ action:
   # --- STEP 6: FILTER & ANALYZE ---
   - variables:
       filtered_data: >-
-        {% set output = namespace(all_prices=[], future_slots=[], charge_prices=[], discharge_prices=[]) %}
+        {% set output = namespace(all_prices=[], future_slots=[], charge_prices=[]) %}
         {% set history_cutoff = now_ts - 3600 %}
         {% set charge_lookahead = now_ts + (12 * 3600) %}
-        {% set discharge_lookahead = now_ts + (8 * 3600) %} 
         
         {% if prices_json %}
            {% for item in prices_json %}
@@ -371,9 +399,6 @@ action:
                   {% set output.future_slots = output.future_slots + [item] %}
                   {% if item.ts <= charge_lookahead %}
                      {% set output.charge_prices = output.charge_prices + [item.price] %}
-                  {% endif %}
-                  {% if item.ts <= discharge_lookahead %}
-                     {% set output.discharge_prices = output.discharge_prices + [item.price] %}
                   {% endif %}
               {% endif %}
            {% endfor %}
@@ -385,7 +410,7 @@ action:
            {% set count = [sorted_charge|length, pk_count] | min %}
            {% set rolling_peak = (sorted_charge[:count] | sum / count) %}
         {% endif %}
-        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "discharge_term": {{ output.discharge_prices }} }
+        {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }} }
 
   # --- STEP 7: DERIVED VARIABLES ---
   - variables:
@@ -413,25 +438,36 @@ action:
            {% else %} -999 {% endif %}
         {% else %} -999 {% endif %}
         
-      # ELASTIC HYSTERESIS FIX (v4.1)
-      # Als de accu aan het ontladen is, tellen we er virtueel 2% bij op om de horizon stabiel te houden
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
-        {% set virtual_soc = current_soc %}
-        {% if is_state(conf_switch, 'off') %}
-           {% set virtual_soc = current_soc + 2.0 %}
-        {% endif %}
-        {% set usable_soc = virtual_soc - (p_min_base_soc | float) %}
-        {% set total_usable = 100.0 - (p_min_base_soc | float) %}
+        {% set usable_soc = current_soc - (p_min_base_soc | float) %}
         
-        {% if usable_soc > 0 and total_usable > 0 %}
-           {% set ratio = usable_soc / total_usable %}
-           {% set reverse_sorted = filtered_data.discharge_term | sort(reverse=True) %}
+        {% if usable_soc > 0 %}
+           {% set ns = namespace(hours_to_charge=8) %}
+           {% set limit_strict = charge_limit_strict | float %}
+           {% set limit_buffer = buffer_limit | float %}
+           
+           {% for item in filtered_data.slots[:8] %}
+              {% if item.price <= limit_strict or item.price <= limit_buffer %}
+                 {% if loop.index0 < ns.hours_to_charge %}
+                    {% set ns.hours_to_charge = loop.index0 %}
+                 {% endif %}
+              {% endif %}
+           {% endfor %}
+           
+           {% set horizon = ns.hours_to_charge %}
+           {% set horizon = [horizon, 1] | max %}
+           
+           {% set kwh_avail = (usable_soc / 100.0) * (p_bat_cap | float) %}
+           {% set hours_to_empty = (kwh_avail / (calculated_avg_kw | float)) | round(0, 'ceil') | int %}
+           {% set hours_to_empty = [hours_to_empty, 1] | max %}
+           
+           {% set active_slots = filtered_data.slots[:horizon] | map(attribute='price') | list %}
+           {% set reverse_sorted = active_slots | sort(reverse=True) %}
            {% set lookahead_len = reverse_sorted | length %}
            
            {% if lookahead_len > 0 %}
-             {% set allowed_hours = (ratio * lookahead_len) | round(0, 'ceil') | int %}
-             {% set allowed_hours = [allowed_hours, 1] | max %}
+             {% set allowed_hours = [hours_to_empty, lookahead_len] | min %}
              {% set optimal_price = reverse_sorted[allowed_hours - 1] %}
              {{ [base_margin_price, optimal_price] | max }}
            {% else %}
@@ -466,6 +502,7 @@ action:
                     Strikt: €{{ charge_limit_strict | round(3) }}
                     Buffer: €{{ buffer_limit | round(3) }}
                     Smart Verkoopgrens: €{{ discharge_start_price | round(3) }}
+                    (Est. afname: {{ calculated_avg_kw }} kW/h)
                   {% else %}
                     Status: {{ current_soc }}%
                   {% endif %}
@@ -564,11 +601,17 @@ action:
                     device_id: !input notify_device
                     message: "🟢 Start Laden (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 5: DISCHARGING ---
+      # --- PRIORITY 5: DISCHARGING (STICKY THRESHOLDS) ---
       - alias: "5. Discharging"
         conditions:
+          # Als de schakelaar al uit staat (ontladen bezig), accepteren we een lagere drempel van -€0.02
           - condition: template
-            value_template: "{{ current_price | round(3) >= discharge_start_price | round(3) }}"
+            value_template: >-
+              {% if is_state(conf_switch, 'off') %}
+                 {{ current_price | round(3) >= (discharge_start_price | float - 0.02) | round(3) }}
+              {% else %}
+                 {{ current_price | round(3) >= discharge_start_price | round(3) }}
+              {% endif %}
           - condition: template
             value_template: "{{ current_price | round(3) > buffer_limit | round(3) }}"
         sequence:
@@ -590,13 +633,19 @@ action:
                     device_id: !input notify_device
                     message: "🔵 Start Ontladen (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 6: SMART HOLD (EEPROM SAVER) ---
+      # --- PRIORITY 6: SMART HOLD (EEPROM SAVER & STICKY THRESHOLDS) ---
       - alias: "6. Smart Hold"
         conditions:
           - condition: template
             value_template: "{{ current_price | round(3) > charge_limit_strict | round(3) }}"
+          # Alleen Hold activeren als we écht onder de (plakkerige) drempel zitten
           - condition: template
-            value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
+            value_template: >-
+              {% if is_state(conf_switch, 'off') %}
+                 {{ current_price | round(3) < (discharge_start_price | float - 0.02) | round(3) }}
+              {% else %}
+                 {{ current_price | round(3) < discharge_start_price | round(3) }}
+              {% endif %}
           - condition: template
             value_template: "{{ current_soc > p_min_base_soc | float }}"
         sequence:
