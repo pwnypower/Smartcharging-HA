@@ -1,10 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v7.0 (Solar Priority Engine)"
+  name: "Frank Energie - Smart Battery Manager v7.1 (Open Selectors)"
   description: >
-    **Fix v7.0:**
-    - **Solar Priority Engine:** Het systeem berekent nu het 'Netto Tekort' voor de batterij. Als de resterende zonnestroom voor vandaag voldoende is om de batterij te vullen, wordt inkopen vanuit het net geblokkeerd.
-    - **Negative Price Override:** Als de stroomprijs negatief is (je krijgt geld toe), wordt de Solar Blocker genegeerd en laadt hij alsnog maximaal vanuit het net.
-    - Bevat: Charge-Aware Horizon, EEPROM Saver, Elastic Hysteresis & Dynamic Forecasting.
+    **Fix v7.1:**
+    - **Open Selectors:** De strenge 'device_class: energy' filters zijn verwijderd bij de voorspellende sensoren. Hierdoor kun je nu ook probleemloos gecombineerde Helpers (zoals een Oost+West dak optelsom) selecteren in het menu.
+    - Bevat: Solar Priority Engine, Charge-Aware Horizon, EEPROM Saver, Elastic Hysteresis & Dynamic Forecasting.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -58,19 +57,19 @@ blueprint:
     # --- FORECASTING & POWER ---
     solar_forecast_remaining_today:
       name: "Sensor: Solar Forecast Remaining Today (kWh) [OPTIONEEL]"
-      description: "Koppel hier de sensor die voorspelt hoeveel zon er VANDAAG NOG wordt opgewekt (bijv. van Forecast.Solar of Solcast). Blokkeert onnodig inkopen."
+      description: "Koppel hier de sensor die voorspelt hoeveel zon er VANDAAG NOG wordt opgewekt (bijv. van Forecast.Solar, Solcast of een Helper). Blokkeert onnodig inkopen."
       default: []
       selector:
         entity:
           domain: sensor
-          device_class: energy
+          # Strenge device_class filter verwijderd in v7.1!
     dynamic_consumption_sensor:
       name: "Sensor: Expected Daily Consumption (kWh) [OPTIONEEL]"
       default: []
       selector:
         entity:
           domain: sensor
-          device_class: energy
+          # Strenge device_class filter verwijderd in v7.1!
     active_discharge_hours:
       name: "Active Discharge Hours (Concentrated Load)"
       default: 16
@@ -450,8 +449,6 @@ action:
            0.0
         {% endif %}
 
-      # Blokkeer laadacties als we de energie straks toch gratis van de zon krijgen
-      # Tenzij de prijs ONDER NUL duikt (dan krijgen we geld toe)
       solar_charging_override: >-
         {% set deficit = dynamic_target_soc | float - current_soc %}
         {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
@@ -612,7 +609,6 @@ action:
                     value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
-                  # Blokkeer het buffer-laden als we de stroom straks gratis van de zon krijgen!
                   - condition: template
                     value_template: "{{ not solar_charging_override }}"
         sequence:
