@@ -1,8 +1,8 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v7.1 (Open Selectors)"
+  name: "Frank Energie - Smart Battery Manager v8.0 (Morning Survival)"
   description: >
-    **Fix v7.1:**
-    - **Open Selectors:** De strenge 'device_class: energy' filters zijn verwijderd bij de voorspellende sensoren. Hierdoor kun je nu ook probleemloos gecombineerde Helpers (zoals een Oost+West dak optelsom) selecteren in het menu.
+    **Fix v8.0:**
+    - **Morning Survival Engine:** De 12-uur blik negeert soms de nacht omdat de middag goedkoper/zonniger is. Dit laat je echter leeg achter voor de ochtendpiek. Deze engine forceert (indien nodig) een kleine 'pre-charge' in het goedkoopste nacht-uur, puur om de dure ochtend door te komen!
     - Bevat: Solar Priority Engine, Charge-Aware Horizon, EEPROM Saver, Elastic Hysteresis & Dynamic Forecasting.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
@@ -57,19 +57,16 @@ blueprint:
     # --- FORECASTING & POWER ---
     solar_forecast_remaining_today:
       name: "Sensor: Solar Forecast Remaining Today (kWh) [OPTIONEEL]"
-      description: "Koppel hier de sensor die voorspelt hoeveel zon er VANDAAG NOG wordt opgewekt (bijv. van Forecast.Solar, Solcast of een Helper). Blokkeert onnodig inkopen."
       default: []
       selector:
         entity:
           domain: sensor
-          # Strenge device_class filter verwijderd in v7.1!
     dynamic_consumption_sensor:
       name: "Sensor: Expected Daily Consumption (kWh) [OPTIONEEL]"
       default: []
       selector:
         entity:
           domain: sensor
-          # Strenge device_class filter verwijderd in v7.1!
     active_discharge_hours:
       name: "Active Discharge Hours (Concentrated Load)"
       default: 16
@@ -102,6 +99,15 @@ blueprint:
           device_class: power
 
     # --- STRATEGY ---
+    morning_survival_soc:
+      name: "Morning Survival Target (%)"
+      description: "Voorkomt een lege batterij in de ochtend. Laadt 's nachts het goedkoopste uur tot dit %, ongeacht of er later die dag veel zon komt."
+      default: 35
+      selector:
+        number:
+          min: 10
+          max: 80
+          unit_of_measurement: "%"
     peak_hours_count:
       name: "Peak Analysis Window"
       default: 3
@@ -272,6 +278,7 @@ action:
       conf_dynamic_cons: !input dynamic_consumption_sensor
       p_active_hours: !input active_discharge_hours
       
+      p_morning_soc: !input morning_survival_soc
       p_peak_count: !input peak_hours_count
       p_buffer_disc: !input buffer_discount_percentage
       p_min_discharge: !input min_discharge_margin
@@ -425,7 +432,7 @@ action:
         {% endif %}
         {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "discharge_term": {{ output.discharge_prices }} }
 
-  # --- STEP 7: DERIVED VARIABLES (SOLAR PRIORITY) ---
+  # --- STEP 7: DERIVED VARIABLES (MORNING SURVIVAL + SOLAR) ---
   - variables:
       sorted_all: "{{ filtered_data.all | sort }}"
       relevant_peak_price: "{{ filtered_data.peak }}"
@@ -441,7 +448,6 @@ action:
         {% else %} {{ t_winter }}
         {% endif %}
         
-      # Haal de verwachte zonnestroom voor de rest van VANDAAG op
       solar_rem: >-
         {% if conf_solar_rem != [] and states(conf_solar_rem) not in ['unknown', 'unavailable', 'none'] %}
            {{ states(conf_solar_rem) | float(0) }}
@@ -454,6 +460,35 @@ action:
         {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
         {{ (solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
 
+      # 1. MORNING SURVIVAL LIMIT (Bypasses the 12-hour lookahead, strictly looks until 06:00 AM)
+      morning_survival_limit: >-
+        {% set survival_target = p_morning_soc | float %}
+        {% if current_soc < survival_target %}
+           {% set deficit = survival_target - current_soc %}
+           {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
+           {% set hours_needed = (kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
+           {% set hours_needed = [hours_needed, 1] | max %}
+
+           {% set current_h = now().hour %}
+           {% set today_date = now().strftime('%Y-%m-%d') %}
+           {% set today_6am = as_timestamp(today_date ~ ' 06:00:00') %}
+           {% set target_6am = (today_6am + 86400) if current_h >= 6 else today_6am %}
+
+           {% set ns = namespace(prices=[]) %}
+           {% for item in filtered_data.slots %}
+              {% if item.ts < target_6am %}
+                 {% set ns.prices = ns.prices + [item.price] %}
+              {% endif %}
+           {% endfor %}
+
+           {% set sorted_night = ns.prices | sort %}
+           {% if sorted_night | length > 0 %}
+              {% set idx = (hours_needed - 1) if (hours_needed - 1) < sorted_night|length else (sorted_night|length - 1) %}
+              {{ sorted_night[idx] }}
+           {% else %} -999 {% endif %}
+        {% else %} -999 {% endif %}
+
+      # 2. NORMAL STRICT LIMIT
       charge_limit_strict: >-
         {% set deficit = dynamic_target_soc | float - current_soc %}
         {% if deficit > 0 %}
@@ -469,6 +504,20 @@ action:
            {% else %} -999 {% endif %}
         {% else %} -999 {% endif %}
         
+      # Bepaal het actieve Target SoC voor de omvormer o.b.v. het type laadsessie
+      active_target_soc: >-
+        {% set is_morning_charge = (morning_survival_limit | float != -999.0) and (current_price | round(3) <= morning_survival_limit | round(3)) and (current_soc < (p_morning_soc | float - 1)) %}
+        {% set normal_strict = (charge_limit_strict | float != -999.0) and (current_price | round(3) <= charge_limit_strict | round(3)) and not solar_charging_override %}
+        {% set normal_buffer = (current_price | round(3) <= buffer_limit | round(3)) and not solar_charging_override %}
+        
+        {% if normal_strict or normal_buffer %}
+           {{ dynamic_target_soc }}
+        {% elif is_morning_charge %}
+           {{ p_morning_soc }}
+        {% else %}
+           {{ dynamic_target_soc }}
+        {% endif %}
+
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
         {% set virtual_soc = current_soc %}
@@ -535,9 +584,9 @@ action:
                     
                     📉 **Drempels**
                     Strikt: €{{ charge_limit_strict | round(3) }}
+                    Morning: €{{ morning_survival_limit | round(3) }}
                     Buffer: €{{ buffer_limit | round(3) }}
-                    Smart Verkoopgrens: €{{ discharge_start_price | round(3) }}
-                    (Est. afname: {{ calculated_avg_kw }} kW/h)
+                    Verkoopgrens: €{{ discharge_start_price | round(3) }}
                   {% else %}
                     Status: {{ current_soc }}%
                   {% endif %}
@@ -593,14 +642,31 @@ action:
         conditions:
           - condition: or
             conditions:
+              # 1. MORNING SURVIVAL (Bypasses Solar Override!)
               - condition: and
                 conditions:
+                  - condition: template
+                    value_template: "{{ morning_survival_limit | float != -999.0 }}"
+                  - condition: template
+                    value_template: "{{ current_price | round(3) <= morning_survival_limit | round(3) }}"
+                  - condition: template
+                    value_template: "{{ current_soc < (p_morning_soc | float - 1) }}"
+                  - condition: template
+                    value_template: "{{ current_price < p_max_cap | float }}"
+              # 2. STRICT NORMAL
+              - condition: and
+                conditions:
+                  - condition: template
+                    value_template: "{{ charge_limit_strict | float != -999.0 }}"
                   - condition: template
                     value_template: "{{ current_price | round(3) <= charge_limit_strict | round(3) }}"
                   - condition: template
                     value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
+                  - condition: template
+                    value_template: "{{ not solar_charging_override }}"
+              # 3. BUFFER NORMAL
               - condition: and
                 conditions:
                   - condition: template
@@ -617,11 +683,11 @@ action:
               
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - dynamic_target_soc|float)|abs > 0.1 }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - active_target_soc|float)|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
-                data: {value: "{{ dynamic_target_soc }}"}
+                data: {value: "{{ active_target_soc }}"}
                 
           - if:
               - condition: template
@@ -674,6 +740,8 @@ action:
         conditions:
           - condition: template
             value_template: "{{ current_price | round(3) > charge_limit_strict | round(3) }}"
+          - condition: template
+            value_template: "{{ current_price | round(3) > morning_survival_limit | round(3) }}"
           - condition: template
             value_template: >-
               {% if is_state(conf_switch, 'off') %}
