@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v9.0 (Solar Bypass & Feed-In)"
+  name: "Frank Energie - Smart Battery Manager v10.0 (Ultimate Export)"
   description: >
-    **Fix v9.0:**
-    - **Solar Bypass (Feed-In Optimizer):** Houdt rekening met ~15% conversieverlies. Als de huidige stroomprijs zó goed is dat direct zonnestroom verkopen rendabeler is dan het opslaan voor de avondpiek, activeert hij de 'Feed-In Priority' modus. De batterij blijft op slot, zonnestroom stroomt direct naar het net voor maximale winst.
-    - Bevat: Morning Survival, Solar Priority, Charge-Aware Horizon, EEPROM Saver.
+    **Fix v10.0:**
+    - **Ultimate Export (Peak Bypass):** Tijdens het ontladen (Priority 5) wordt de Feed-In Priority nu geforceerd AAN gezet i.p.v. UIT. Dit garandeert dat tijdens extreme ochtend- en avondpieken je zonnestroom 100% naar het net vloeit voor maximale winst, terwijl de batterij het huis voedt. Geen druppel dure zonnestroom verdwijnt meer onnodig in de batterij.
+    - Bevat: Solar Bypass, Morning Survival, Solar Priority, Charge-Aware Horizon, EEPROM Saver.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -28,7 +28,7 @@ blueprint:
           domain: switch
     feed_in_switch:
       name: "Switch: Feed-In Priority [OPTIONEEL]"
-      description: "Schakelaar om overschot direct aan het net te leveren (bypass batterij). Wordt gebruikt voor de Solar Bypass optimalisatie."
+      description: "Schakelaar om overschot direct aan het net te leveren. Nu essentieel voor het meepakken van de ochtendpiek!"
       default: []
       selector:
         entity:
@@ -565,7 +565,7 @@ action:
            {{ base_margin_price }}
         {% endif %}
 
-      # SOLAR BYPASS THRESHOLD (Verrekent ~15% conversieverlies)
+      # SOLAR BYPASS THRESHOLD
       feed_in_start_price: "{{ (discharge_start_price | float * 0.85) | round(3) }}"
 
   # --- STEP 8: EXECUTION (STATE ENGINE) ---
@@ -728,7 +728,7 @@ action:
                     device_id: !input notify_device
                     message: "🟢 Start Laden (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 5: DISCHARGING ---
+      # --- PRIORITY 5: DISCHARGING (ULTIMATE EXPORT) ---
       - alias: "5. Discharging"
         conditions:
           - condition: template
@@ -744,11 +744,12 @@ action:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
               
+          # V10 FIX: We sturen de zonnestroom GEFORCEERD naar het net tijdens een verkooppiek!
           - if:
               - condition: template
                 value_template: "{{ conf_feed_in != [] }}"
             then:
-              - service: switch.turn_off
+              - service: switch.turn_on
                 target: {entity_id: !input feed_in_switch}
                 
           - if:
@@ -779,7 +780,6 @@ action:
           - variables:
               feed_in_was_off: "{{ is_state(conf_feed_in, 'off') }}"
           
-          # We lock the battery to prevent discharging, ensuring ONLY solar goes to the grid
           - service: switch.turn_on
             target: {entity_id: !input battery_reserve_switch}
           - service: number.set_value
@@ -799,7 +799,7 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "☀️ Solar Bypass Actief (Feed-In Priority). Directe verkoop!"
+                    message: "☀️ Solar Bypass Actief. Batterij op slot, zonnestroom naar net!"
 
       # --- PRIORITY 6: SMART HOLD ---
       - alias: "6. Smart Hold"
@@ -815,7 +815,6 @@ action:
               {% else %}
                  {{ current_price | round(3) < discharge_start_price | round(3) }}
               {% endif %}
-          # Als Solar Bypass actief zou moeten zijn, sla deze stap over
           - condition: template
             value_template: >-
               {% if conf_feed_in != [] %}
