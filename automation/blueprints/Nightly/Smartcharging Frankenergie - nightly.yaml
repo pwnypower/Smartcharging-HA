@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v10.0 (Ultimate Export)"
+  name: "Frank Energie - Smart Battery Manager v12.0 (Peak-Aware Bypass)"
   description: >
-    **Fix v10.0:**
-    - **Ultimate Export (Peak Bypass):** Tijdens het ontladen (Priority 5) wordt de Feed-In Priority nu geforceerd AAN gezet i.p.v. UIT. Dit garandeert dat tijdens extreme ochtend- en avondpieken je zonnestroom 100% naar het net vloeit voor maximale winst, terwijl de batterij het huis voedt. Geen druppel dure zonnestroom verdwijnt meer onnodig in de batterij.
-    - Bevat: Solar Bypass, Morning Survival, Solar Priority, Charge-Aware Horizon, EEPROM Saver.
+    **Fix v12.0:**
+    - **Peak-Aware Bypass:** De Feed-In (Solar Bypass) rekenmodule is drastisch verbeterd. Hij berekent nu zijn drempel o.b.v. de absolute piekprijs van de avond, i.p.v. de dynamische ontlaad-drempel. Hierdoor wordt de batterij 's middags niet meer onnodig "uitgehongerd" als er vanavond nog een grote winstmarge op de planning staat!
+    - Bevat: Profit Lock Ratchet, Anti Ping-Pong, Ultimate Export, Morning Survival, Solar Priority.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -28,7 +28,6 @@ blueprint:
           domain: switch
     feed_in_switch:
       name: "Switch: Feed-In Priority [OPTIONEEL]"
-      description: "Schakelaar om overschot direct aan het net te leveren. Nu essentieel voor het meepakken van de ochtendpiek!"
       default: []
       selector:
         entity:
@@ -106,6 +105,14 @@ blueprint:
           device_class: power
 
     # --- STRATEGY ---
+    profit_lock_step:
+      name: "Smart Hold: Profit Lock Step (%)"
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 20
+          unit_of_measurement: "%"
     morning_survival_soc:
       name: "Morning Survival Target (%)"
       default: 35
@@ -285,6 +292,7 @@ action:
       conf_dynamic_cons: !input dynamic_consumption_sensor
       p_active_hours: !input active_discharge_hours
       
+      p_lock_step: !input profit_lock_step
       p_morning_soc: !input morning_survival_soc
       p_peak_count: !input peak_hours_count
       p_buffer_disc: !input buffer_discount_percentage
@@ -439,7 +447,7 @@ action:
         {% endif %}
         {"all": {{ output.all_prices }}, "slots": {{ output.future_slots }}, "peak": {{ rolling_peak }}, "discharge_term": {{ output.discharge_prices }} }
 
-  # --- STEP 7: DERIVED VARIABLES ---
+  # --- STEP 7: DERIVED VARIABLES & HYSTERESIS ---
   - variables:
       sorted_all: "{{ filtered_data.all | sort }}"
       relevant_peak_price: "{{ filtered_data.peak }}"
@@ -463,13 +471,24 @@ action:
         {% endif %}
 
       solar_charging_override: >-
-        {% set deficit = dynamic_target_soc | float - current_soc %}
-        {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-        {{ (solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
+        {% set virtual_soc_solar = current_soc %}
+        {% if is_state(conf_switch, 'off') %}
+           {% set virtual_soc_solar = current_soc + 3.0 %}
+        {% endif %}
+        {% set deficit = dynamic_target_soc | float - virtual_soc_solar %}
+        {% if deficit > 0 %}
+           {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
+           {{ (solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
+        {% else %}
+           True
+        {% endif %}
 
       morning_survival_limit: >-
         {% set survival_target = p_morning_soc | float %}
-        {% if current_soc < survival_target %}
+        {% set is_active_morning = is_state(conf_switch, 'on') and (states(conf_target_num)|float(0) == survival_target) %}
+        {% set threshold = survival_target if is_active_morning else (survival_target - 2) %}
+        
+        {% if current_soc < threshold %}
            {% set deficit = survival_target - current_soc %}
            {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
            {% set hours_needed = (kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
@@ -510,7 +529,7 @@ action:
         {% else %} -999 {% endif %}
         
       active_target_soc: >-
-        {% set is_morning_charge = (morning_survival_limit | float != -999.0) and (current_price | round(3) <= morning_survival_limit | round(3)) and (current_soc < (p_morning_soc | float - 1)) %}
+        {% set is_morning_charge = (morning_survival_limit | float != -999.0) and (current_price | round(3) <= morning_survival_limit | round(3)) and (current_soc < (p_morning_soc | float - 0.1)) %}
         {% set normal_strict = (charge_limit_strict | float != -999.0) and (current_price | round(3) <= charge_limit_strict | round(3)) and not solar_charging_override %}
         {% set normal_buffer = (current_price | round(3) <= buffer_limit | round(3)) and not solar_charging_override %}
         
@@ -565,8 +584,11 @@ action:
            {{ base_margin_price }}
         {% endif %}
 
-      # SOLAR BYPASS THRESHOLD
-      feed_in_start_price: "{{ (discharge_start_price | float * 0.85) | round(3) }}"
+      # V12 FIX: Solar Bypass kijkt nu naar de échte absolute komende piekprijs, niet meer naar de fluctuerende ontlaad-drempel!
+      feed_in_start_price: >-
+        {% set peak_bypass = relevant_peak_price | float * 0.85 %}
+        {% set discharge_bypass = discharge_start_price | float * 0.85 %}
+        {{ [peak_bypass, discharge_bypass] | max | round(3) }}
 
   # --- STEP 8: EXECUTION (STATE ENGINE) ---
   - choose:
@@ -669,7 +691,7 @@ action:
                   - condition: template
                     value_template: "{{ current_price | round(3) <= morning_survival_limit | round(3) }}"
                   - condition: template
-                    value_template: "{{ current_soc < (p_morning_soc | float - 1) }}"
+                    value_template: "{{ current_soc < (p_morning_soc | float - 0.1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
               - condition: and
@@ -728,7 +750,7 @@ action:
                     device_id: !input notify_device
                     message: "🟢 Start Laden (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 5: DISCHARGING (ULTIMATE EXPORT) ---
+      # --- PRIORITY 5: DISCHARGING ---
       - alias: "5. Discharging"
         conditions:
           - condition: template
@@ -744,7 +766,6 @@ action:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
               
-          # V10 FIX: We sturen de zonnestroom GEFORCEERD naar het net tijdens een verkooppiek!
           - if:
               - condition: template
                 value_template: "{{ conf_feed_in != [] }}"
@@ -767,7 +788,7 @@ action:
                     device_id: !input notify_device
                     message: "🔵 Start Ontladen (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 5.5: SOLAR BYPASS (FEED-IN) ---
+      # --- PRIORITY 5.5: SOLAR BYPASS ---
       - alias: "5.5. Solar Bypass (Feed-In Priority)"
         conditions:
           - condition: template
@@ -779,12 +800,24 @@ action:
         sequence:
           - variables:
               feed_in_was_off: "{{ is_state(conf_feed_in, 'off') }}"
+              was_off: "{{ is_state(conf_switch, 'off') }}"
           
-          - service: switch.turn_on
-            target: {entity_id: !input battery_reserve_switch}
-          - service: number.set_value
-            target: {entity_id: !input target_soc_number}
-            data: {value: "{{ current_soc | int }}"}
+          - if:
+              - condition: template
+                value_template: "{{ was_off }}"
+            then:
+              - service: switch.turn_on
+                target: {entity_id: !input battery_reserve_switch}
+                
+          - if:
+              - condition: template
+                value_template: >-
+                  {% set target = states(conf_target_num)|float(0) %}
+                  {{ (target - current_soc) > 2 or (current_soc - target) >= p_lock_step }}
+            then:
+              - service: number.set_value
+                target: {entity_id: !input target_soc_number}
+                data: {value: "{{ current_soc | int }}"}
             
           - if:
               - condition: template
@@ -852,7 +885,9 @@ action:
                     
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - current_soc) > 2 }}"
+                value_template: >-
+                  {% set target = states(conf_target_num)|float(0) %}
+                  {{ (target - current_soc) > 2 or (current_soc - target) >= p_lock_step }}
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
