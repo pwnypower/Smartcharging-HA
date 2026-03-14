@@ -1,9 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v12.0 (Peak-Aware Bypass)"
+  name: "Frank Energie - Smart Battery Manager v15.2 (Night-Bypass Fix)"
   description: >
-    **Fix v12.0:**
-    - **Peak-Aware Bypass:** De Feed-In (Solar Bypass) rekenmodule is drastisch verbeterd. Hij berekent nu zijn drempel o.b.v. de absolute piekprijs van de avond, i.p.v. de dynamische ontlaad-drempel. Hierdoor wordt de batterij 's middags niet meer onnodig "uitgehongerd" als er vanavond nog een grote winstmarge op de planning staat!
-    - Bevat: Profit Lock Ratchet, Anti Ping-Pong, Ultimate Export, Morning Survival, Solar Priority.
+    **Fix v15.2:**
+    - **Night-Bypass Fix:** De Solar Bypass (Priority 5.5) kijkt nu daadwerkelijk uit het raam. Hij activeert alleen nog als de zon op is. In de nacht bij een lege accu + hoge prijzen zal hij niet meer onlogisch proberen 'zonnestroom te verkopen', maar zakt hij keurig direct terug in de stille 'Smart Hold' kluis.
+    - Bevat: Hybrid Load Profiler, Load-Aware Solar, Hardware Guard, Peak Lockout, Peak-Aware Bypass, Profit Lock Ratchet, Anti Ping-Pong, Ultimate Export.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -67,28 +67,6 @@ blueprint:
       selector:
         entity:
           domain: sensor
-    dynamic_consumption_sensor:
-      name: "Sensor: Expected Daily Consumption (kWh) [OPTIONEEL]"
-      default: []
-      selector:
-        entity:
-          domain: sensor
-    active_discharge_hours:
-      name: "Active Discharge Hours (Concentrated Load)"
-      default: 16
-      selector:
-        number:
-          min: 8
-          max: 24
-          step: 1
-    avg_consumption_kw:
-      name: "Fallback Average House Load (kW)"
-      default: 0.5
-      selector:
-        number:
-          min: 0.1
-          max: 10.0
-          step: 0.1
     p1_power_sensor:
       name: "Sensor: P1 Grid Import (Watt)"
       default: []
@@ -103,6 +81,67 @@ blueprint:
         entity:
           domain: sensor
           device_class: power
+
+    # --- HYBRID LOAD PROFILING ---
+    sensor_load_night:
+      name: "Sensor: Night Load (kW) [OPTIONEEL]"
+      default: []
+      selector:
+        entity:
+          domain: ["sensor", "input_number"]
+    fallback_load_night:
+      name: "Fallback: Night Load (00:00 - 06:00) in kW"
+      default: 0.3
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
+
+    sensor_load_morning:
+      name: "Sensor: Morning Load (kW) [OPTIONEEL]"
+      default: []
+      selector:
+        entity:
+          domain: ["sensor", "input_number"]
+    fallback_load_morning:
+      name: "Fallback: Morning Load (06:00 - 09:00) in kW"
+      default: 1.5
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
+
+    sensor_load_day:
+      name: "Sensor: Day Load (kW) [OPTIONEEL]"
+      default: []
+      selector:
+        entity:
+          domain: ["sensor", "input_number"]
+    fallback_load_day:
+      name: "Fallback: Day Load (09:00 - 17:00) in kW"
+      default: 0.5
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
+
+    sensor_load_evening:
+      name: "Sensor: Evening Load (kW) [OPTIONEEL]"
+      default: []
+      selector:
+        entity:
+          domain: ["sensor", "input_number"]
+    fallback_load_evening:
+      name: "Fallback: Evening Load (17:00 - 00:00) in kW"
+      default: 2.0
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
 
     # --- STRATEGY ---
     profit_lock_step:
@@ -289,8 +328,15 @@ action:
       conf_bat_pow: !input battery_power_sensor
       
       conf_solar_rem: !input solar_forecast_remaining_today
-      conf_dynamic_cons: !input dynamic_consumption_sensor
-      p_active_hours: !input active_discharge_hours
+      
+      conf_load_night: !input sensor_load_night
+      fallback_night: !input fallback_load_night
+      conf_load_morning: !input sensor_load_morning
+      fallback_morning: !input fallback_load_morning
+      conf_load_day: !input sensor_load_day
+      fallback_day: !input fallback_load_day
+      conf_load_evening: !input sensor_load_evening
+      fallback_evening: !input fallback_load_evening
       
       p_lock_step: !input profit_lock_step
       p_morning_soc: !input morning_survival_soc
@@ -299,7 +345,6 @@ action:
       p_min_discharge: !input min_discharge_margin
       p_bat_cap: !input battery_capacity_kwh
       p_charge_kw: !input charge_power_kw
-      p_fallback_avg_kw: !input avg_consumption_kw
       p_safety: !input safety_factor
       p_max_cap: !input max_price_cap
       p_min_base_soc: !input min_base_soc
@@ -310,7 +355,7 @@ action:
       s_sol_today: !input solar_forecast_today
       s_sol_tom: !input solar_forecast_tomorrow
 
-  # --- STEP 2: STATE READING & DYNAMIC FORECASTING ---
+  # --- STEP 2: STATE READING & PROFILING ---
   - variables:
       current_soc: "{{ states(conf_soc_sensor) | float(0) }}"
       last_paid_price: "{{ states(conf_last_price) | float(0) }}"
@@ -327,17 +372,37 @@ action:
           {{ raw_price_state | float(last_paid_price) }}
         {% endif %}
         
-      calculated_avg_kw: >-
-        {% if conf_dynamic_cons != [] and states(conf_dynamic_cons) not in ['unknown', 'unavailable', 'none'] %}
-          {% set daily_kwh = states(conf_dynamic_cons) | float(0) %}
-          {% set active_h = p_active_hours | float(16) %}
-          {% if daily_kwh > 0 %}
-            {{ (daily_kwh / active_h) | round(2) }}
-          {% else %}
-            {{ p_fallback_avg_kw }}
-          {% endif %}
+      val_night: >-
+        {% if conf_load_night != [] and states(conf_load_night) not in ['unknown', 'unavailable', 'none'] %}
+          {{ states(conf_load_night) | float(0) }}
         {% else %}
-          {{ p_fallback_avg_kw }}
+          {{ fallback_night }}
+        {% endif %}
+      val_morning: >-
+        {% if conf_load_morning != [] and states(conf_load_morning) not in ['unknown', 'unavailable', 'none'] %}
+          {{ states(conf_load_morning) | float(0) }}
+        {% else %}
+          {{ fallback_morning }}
+        {% endif %}
+      val_day: >-
+        {% if conf_load_day != [] and states(conf_load_day) not in ['unknown', 'unavailable', 'none'] %}
+          {{ states(conf_load_day) | float(0) }}
+        {% else %}
+          {{ fallback_day }}
+        {% endif %}
+      val_evening: >-
+        {% if conf_load_evening != [] and states(conf_load_evening) not in ['unknown', 'unavailable', 'none'] %}
+          {{ states(conf_load_evening) | float(0) }}
+        {% else %}
+          {{ fallback_evening }}
+        {% endif %}
+        
+      current_load_kw: >-
+        {% set h = now().hour %}
+        {% if h < 6 %} {{ val_night }}
+        {% elif h < 9 %} {{ val_morning }}
+        {% elif h < 17 %} {{ val_day }}
+        {% else %} {{ val_evening }}
         {% endif %}
 
   # --- STEP 3: HYBRID COST ---
@@ -463,9 +528,22 @@ action:
         {% else %} {{ t_winter }}
         {% endif %}
         
-      solar_rem: >-
+      expected_house_load_today: >-
+        {% set h = now().hour %}
+        {% set ns = namespace(rem_kwh=0.0) %}
+        {% for i in range(h, 24) %}
+           {% if i < 6 %} {% set ns.rem_kwh = ns.rem_kwh + (val_night | float) %}
+           {% elif i < 9 %} {% set ns.rem_kwh = ns.rem_kwh + (val_morning | float) %}
+           {% elif i < 17 %} {% set ns.rem_kwh = ns.rem_kwh + (val_day | float) %}
+           {% else %} {% set ns.rem_kwh = ns.rem_kwh + (val_evening | float) %}
+           {% endif %}
+        {% endfor %}
+        {{ ns.rem_kwh }}
+
+      effective_solar_rem: >-
         {% if conf_solar_rem != [] and states(conf_solar_rem) not in ['unknown', 'unavailable', 'none'] %}
-           {{ states(conf_solar_rem) | float(0) }}
+           {% set raw_solar = states(conf_solar_rem) | float(0) %}
+           {{ [raw_solar - (expected_house_load_today | float), 0.0] | max }}
         {% else %}
            0.0
         {% endif %}
@@ -478,38 +556,40 @@ action:
         {% set deficit = dynamic_target_soc | float - virtual_soc_solar %}
         {% if deficit > 0 %}
            {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-           {{ (solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
+           {{ (effective_solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
         {% else %}
            True
         {% endif %}
 
       morning_survival_limit: >-
-        {% set survival_target = p_morning_soc | float %}
-        {% set is_active_morning = is_state(conf_switch, 'on') and (states(conf_target_num)|float(0) == survival_target) %}
-        {% set threshold = survival_target if is_active_morning else (survival_target - 2) %}
-        
-        {% if current_soc < threshold %}
-           {% set deficit = survival_target - current_soc %}
-           {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-           {% set hours_needed = (kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
-           {% set hours_needed = [hours_needed, 1] | max %}
+        {% set current_h = now().hour %}
+        {% if current_h < 6 or current_h >= 21 %}
+           {% set survival_target = p_morning_soc | float %}
+           {% set is_active_morning = is_state(conf_switch, 'on') and (states(conf_target_num)|float(0) == survival_target) %}
+           {% set threshold = survival_target if is_active_morning else (survival_target - 2) %}
+           
+           {% if current_soc < threshold %}
+              {% set deficit = survival_target - current_soc %}
+              {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
+              {% set hours_needed = (kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
+              {% set hours_needed = [hours_needed, 1] | max %}
 
-           {% set current_h = now().hour %}
-           {% set today_date = now().strftime('%Y-%m-%d') %}
-           {% set today_6am = as_timestamp(today_date ~ ' 06:00:00') %}
-           {% set target_6am = (today_6am + 86400) if current_h >= 6 else today_6am %}
+              {% set today_date = now().strftime('%Y-%m-%d') %}
+              {% set today_6am = as_timestamp(today_date ~ ' 06:00:00') %}
+              {% set target_6am = (today_6am + 86400) if current_h >= 6 else today_6am %}
 
-           {% set ns = namespace(prices=[]) %}
-           {% for item in filtered_data.slots %}
-              {% if item.ts < target_6am %}
-                 {% set ns.prices = ns.prices + [item.price] %}
-              {% endif %}
-           {% endfor %}
+              {% set ns = namespace(prices=[]) %}
+              {% for item in filtered_data.slots %}
+                 {% if item.ts < target_6am %}
+                    {% set ns.prices = ns.prices + [item.price] %}
+                 {% endif %}
+              {% endfor %}
 
-           {% set sorted_night = ns.prices | sort %}
-           {% if sorted_night | length > 0 %}
-              {% set idx = (hours_needed - 1) if (hours_needed - 1) < sorted_night|length else (sorted_night|length - 1) %}
-              {{ sorted_night[idx] }}
+              {% set sorted_night = ns.prices | sort %}
+              {% if sorted_night | length > 0 %}
+                 {% set idx = (hours_needed - 1) if (hours_needed - 1) < sorted_night|length else (sorted_night|length - 1) %}
+                 {{ sorted_night[idx] }}
+              {% else %} -999 {% endif %}
            {% else %} -999 {% endif %}
         {% else %} -999 {% endif %}
 
@@ -517,7 +597,7 @@ action:
         {% set deficit = dynamic_target_soc | float - current_soc %}
         {% if deficit > 0 %}
            {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-           {% set net_kwh_needed = kwh_needed - (solar_rem | float) %}
+           {% set net_kwh_needed = kwh_needed - (effective_solar_rem | float) %}
            {% if net_kwh_needed > 0 %}
              {% set hours_needed = (net_kwh_needed / p_charge_kw | float * p_safety | float) | round(0, 'ceil') | int %}
              {% set hours_needed = [hours_needed, 1] | max %}
@@ -544,9 +624,11 @@ action:
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
         {% set virtual_soc = current_soc %}
-        {% if is_state(conf_switch, 'off') %}
+        
+        {% if is_state(conf_switch, 'off') and current_soc > (p_min_base_soc | float + 1) %}
            {% set virtual_soc = current_soc + 2.0 %}
         {% endif %}
+        
         {% set usable_soc = virtual_soc - (p_min_base_soc | float) %}
         
         {% if usable_soc > 0 %}
@@ -566,8 +648,18 @@ action:
            {% set horizon = [horizon, 1] | max %}
            
            {% set kwh_avail = (usable_soc / 100.0) * (p_bat_cap | float) %}
-           {% set hours_to_empty = (kwh_avail / (calculated_avg_kw | float)) | round(0, 'ceil') | int %}
-           {% set hours_to_empty = [hours_to_empty, 1] | max %}
+           
+           {% set h = now().hour %}
+           {% set ns2 = namespace(rem=kwh_avail, hours=0) %}
+           {% for i in range(h, h + 24) %}
+              {% if ns2.rem > 0 %}
+                 {% set hd = i % 24 %}
+                 {% set load = (val_night | float) if hd < 6 else ((val_morning | float) if hd < 9 else ((val_day | float) if hd < 17 else (val_evening | float))) %}
+                 {% set ns2.rem = ns2.rem - load %}
+                 {% set ns2.hours = ns2.hours + 1 %}
+              {% endif %}
+           {% endfor %}
+           {% set hours_to_empty = [ns2.hours, 1] | max %}
            
            {% set active_slots = filtered_data.slots[:horizon] | map(attribute='price') | list %}
            {% set reverse_sorted = active_slots | sort(reverse=True) %}
@@ -584,7 +676,6 @@ action:
            {{ base_margin_price }}
         {% endif %}
 
-      # V12 FIX: Solar Bypass kijkt nu naar de échte absolute komende piekprijs, niet meer naar de fluctuerende ontlaad-drempel!
       feed_in_start_price: >-
         {% set peak_bypass = relevant_peak_price | float * 0.85 %}
         {% set discharge_bypass = discharge_start_price | float * 0.85 %}
@@ -616,6 +707,7 @@ action:
                     Morning: €{{ morning_survival_limit | round(3) }}
                     Feed-In Bypass: €{{ feed_in_start_price | round(3) }}
                     Verkoopgrens: €{{ discharge_start_price | round(3) }}
+                    (Profiel: {{ current_load_kw }} kW afname nu)
                   {% else %}
                     Status: {{ current_soc }}%
                   {% endif %}
@@ -642,7 +734,11 @@ action:
       - alias: "3. Emergency Charge"
         conditions:
           - condition: template
-            value_template: "{{ current_soc < p_min_base_soc | float }}"
+            value_template: >-
+              {% set target = states(conf_target_num)|float(0) %}
+              {% set is_active_emerg = is_state(conf_switch, 'on') and (target == (p_min_base_soc | float + 2)) %}
+              {% set threshold = (p_min_base_soc | float + 2) if is_active_emerg else (p_min_base_soc | float) %}
+              {{ current_soc < threshold }}
           - condition: template
             value_template: "{{ current_price < (p_max_cap | float * 1.5) }}"
         sequence:
@@ -651,11 +747,11 @@ action:
           
           - if:
               - condition: template
-                value_template: "{{ (states(conf_target_num)|float(0) - p_min_base_soc|float)|abs > 0.1 }}"
+                value_template: "{{ (states(conf_target_num)|float(0) - (p_min_base_soc|float + 2))|abs > 0.1 }}"
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
-                data: {value: "{{ p_min_base_soc }}"}
+                data: {value: "{{ p_min_base_soc | float + 2 }}"}
           
           - if:
               - condition: template
@@ -694,6 +790,8 @@ action:
                     value_template: "{{ current_soc < (p_morning_soc | float - 0.1) }}"
                   - condition: template
                     value_template: "{{ current_price < p_max_cap | float }}"
+                  - condition: template
+                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
               - condition: and
                 conditions:
                   - condition: template
@@ -706,6 +804,8 @@ action:
                     value_template: "{{ current_price < p_max_cap | float }}"
                   - condition: template
                     value_template: "{{ not solar_charging_override }}"
+                  - condition: template
+                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
               - condition: and
                 conditions:
                   - condition: template
@@ -716,6 +816,8 @@ action:
                     value_template: "{{ current_price < p_max_cap | float }}"
                   - condition: template
                     value_template: "{{ not solar_charging_override }}"
+                  - condition: template
+                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
@@ -754,6 +856,8 @@ action:
       - alias: "5. Discharging"
         conditions:
           - condition: template
+            value_template: "{{ current_soc > (p_min_base_soc | float + 1) }}"
+          - condition: template
             value_template: >-
               {% if is_state(conf_switch, 'off') %}
                  {{ current_price | round(3) >= (discharge_start_price | float - 0.02) | round(3) }}
@@ -788,9 +892,12 @@ action:
                     device_id: !input notify_device
                     message: "🔵 Start Ontladen (€{{ current_price | round(3) }})"
 
-      # --- PRIORITY 5.5: SOLAR BYPASS ---
+      # --- PRIORITY 5.5: SOLAR BYPASS (NIGHT-FIX) ---
       - alias: "5.5. Solar Bypass (Feed-In Priority)"
         conditions:
+          # V15.2 FIX: De zonne-bypass mag UITSLUITEND actief zijn als de zon daadwerkelijk schijnt!
+          - condition: template
+            value_template: "{{ is_daytime }}"
           - condition: template
             value_template: "{{ current_price | round(3) >= feed_in_start_price | round(3) }}"
           - condition: template
@@ -850,7 +957,7 @@ action:
               {% endif %}
           - condition: template
             value_template: >-
-              {% if conf_feed_in != [] %}
+              {% if conf_feed_in != [] and is_daytime %}
                  {{ current_price | round(3) < feed_in_start_price | round(3) }}
               {% else %}
                  true
