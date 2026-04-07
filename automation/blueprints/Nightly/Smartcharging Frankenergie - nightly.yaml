@@ -1074,3 +1074,22 @@ action:
                 then:
                   - domain: mobile_app
                     type: notify
+                    device_id: !input notify_device
+                    message: "⛔ Negatieve kale stroomprijs (€{{ current_raw_price }}). Zonnepanelen export tijdelijk geblokkeerd!"
+        else:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(conf_export_block, 'on') }}"
+            then:
+              - service: switch.turn_off
+                target: {entity_id: !input export_block_switch}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                  then:
+                    - domain: mobile_app
+                      type: notify
+                      device_id: !input notify_device
+                      message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
+
+mode: single
