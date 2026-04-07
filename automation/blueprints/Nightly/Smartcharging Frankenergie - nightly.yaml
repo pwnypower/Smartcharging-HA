@@ -1,8 +1,8 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.4.1 (Negative Export Guard Fix)"
+  name: "Frank Energie - Smart Battery Manager v15.4.2 (Export Guard Fix)"
   description: >
-    **Fix v15.4.1:**
-    - **Negative Export Guard Fix:** Verwijdert de raw_price_sensor uit de triggers. Hierdoor crasht Home Assistant niet meer met een 'Missing Input' foutmelding als je dit veld leeg laat!
+    **Fix v15.4.2:**
+    - **Syntax Fix:** Lost een YAML-indentatiefout op in de notificatie-module van de Export Guard waardoor de blueprint niet opgeslagen kon worden.
     - **Negative Export Guard:** Als de kale stroomprijs onder €0.00 duikt, trekt de export blokkade volautomatisch aan.
     - Bevat ook: EEPROM Guard, Tie-Breaker Patch, Hybrid Profiler, Night-Bypass Fix.
     
@@ -1086,10 +1086,10 @@ action:
               - if:
                   - condition: template
                     value_template: "{{ has_notify_device }}"
-                  then:
-                    - domain: mobile_app
-                      type: notify
-                      device_id: !input notify_device
-                      message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
 
 mode: single
