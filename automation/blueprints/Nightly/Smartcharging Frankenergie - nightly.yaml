@@ -1,10 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.3 (EEPROM Guard)"
+  name: "Frank Energie - Smart Battery Manager v15.4 (Negative Export Guard)"
   description: >
-    **Fix v15.3:**
-    - **EEPROM Guard:** Voegt een absoluut schild toe tegen 'State Flapping' van omvormers (vooral Solis). Achtergrond-updates van de integratie triggerden onbedoeld schrijf-loops. De code blokkeert nu alle triggers behalve échte hardware-wijzigingen, wat de levensduur van je EEPROM-chip redt.
-    - **Tie-Breaker Patch:** Voorkomt een wiskundig gelijkspel waarbij de ontlaad-drempel exact gelijk is aan de laad-drempel.
-    - Bevat: Hybrid Load Profiler, Night-Bypass Fix, Hardware Guard, Peak Lockout.
+    **Fix v15.4:**
+    - **Negative Export Guard:** Twee nieuwe optionele velden toegevoegd. Koppel je 'kale prijs' sensor en de 'Zero Export' schakelaar van je omvormer. Duikt de kale prijs onder de €0.00? Dan trekt het systeem volautomatisch de export-handrem aan. Zodra de prijs weer positief is, mag de stroom het net weer op.
+    - Bevat ook: EEPROM Guard, Tie-Breaker Patch, Hybrid Profiler, Night-Bypass Fix.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -45,7 +44,7 @@ blueprint:
         entity:
           domain: number
     frank_price_sensor:
-      name: "Sensor: Frank Energy Prices"
+      name: "Sensor: Frank Energy Prices (All-in)"
       selector:
         entity:
           domain: sensor
@@ -60,6 +59,22 @@ blueprint:
       selector:
         entity:
           domain: sun
+
+    # --- NEGATIVE PRICE GUARD (V15.4) ---
+    raw_price_sensor:
+      name: "Sensor: Frank Energy Raw Market Price (€) [OPTIONEEL]"
+      description: "De kale marktprijs sensor (zonder belasting). Als deze onder de €0.00 duikt, activeert de Export-blokkade."
+      default: []
+      selector:
+        entity:
+          domain: sensor
+    export_block_switch:
+      name: "Switch: Zero Export / Export Limit [OPTIONEEL]"
+      description: "Schakelaar die de teruglevering naar het net blokkeert (AAN = Blokkade Actief / 0 Watt export)."
+      default: []
+      selector:
+        entity:
+          domain: switch
 
     # --- FORECASTING & POWER ---
     solar_forecast_remaining_today:
@@ -306,6 +321,9 @@ trigger:
     entity_id: !input frank_price_sensor
     id: "price_change"
   - platform: state
+    entity_id: !input raw_price_sensor
+    id: "raw_price_change"
+  - platform: state
     entity_id: !input battery_soc_sensor
     id: "soc_change"
   - platform: template
@@ -336,6 +354,9 @@ action:
       conf_sun: !input sun_entity
       conf_p1: !input p1_power_sensor
       conf_bat_pow: !input battery_power_sensor
+      
+      conf_raw_price: !input raw_price_sensor
+      conf_export_block: !input export_block_switch
       
       conf_solar_rem: !input solar_forecast_remaining_today
       
@@ -380,6 +401,13 @@ action:
           {{ last_paid_price }}
         {% else %}
           {{ raw_price_state | float(last_paid_price) }}
+        {% endif %}
+        
+      current_raw_price: >-
+        {% if conf_raw_price != [] and states(conf_raw_price) not in ['unknown', 'unavailable', 'none'] %}
+          {{ states(conf_raw_price) | float(0.0) }}
+        {% else %}
+          0.0
         {% endif %}
         
       val_night: >-
@@ -631,7 +659,6 @@ action:
            {{ dynamic_target_soc }}
         {% endif %}
 
-      # V15.3 FIX: De Wiskundige Scheidsrechter (Tie-Breaker Patch)
       discharge_start_price: >-
         {% set base_margin_price = last_paid_price * (1 + (p_min_discharge|float / 100)) %}
         {% set virtual_soc = current_soc %}
@@ -1027,5 +1054,44 @@ action:
         then:
           - service: switch.turn_off
             target: {entity_id: !input feed_in_switch}
+
+  # --- STEP 9: NEGATIVE EXPORT GUARD (V15.4) ---
+  - if:
+      - condition: template
+        value_template: "{{ conf_export_block != [] and conf_raw_price != [] }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ current_raw_price < 0.0 }}"
+        then:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(conf_export_block, 'off') }}"
+            then:
+              - service: switch.turn_on
+                target: {entity_id: !input export_block_switch}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                then:
+                  - domain: mobile_app
+                    type: notify
+                    device_id: !input notify_device
+                    message: "⛔ Negatieve kale stroomprijs (€{{ current_raw_price }}). Zonnepanelen export tijdelijk geblokkeerd!"
+        else:
+          - if:
+              - condition: template
+                value_template: "{{ is_state(conf_export_block, 'on') }}"
+            then:
+              - service: switch.turn_off
+                target: {entity_id: !input export_block_switch}
+              - if:
+                  - condition: template
+                    value_template: "{{ has_notify_device }}"
+                  then:
+                    - domain: mobile_app
+                      type: notify
+                      device_id: !input notify_device
+                      message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
 
 mode: single
