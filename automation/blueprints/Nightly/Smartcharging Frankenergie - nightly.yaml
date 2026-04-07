@@ -1,8 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.4 (Negative Export Guard)"
+  name: "Frank Energie - Smart Battery Manager v15.4.1 (Negative Export Guard Fix)"
   description: >
-    **Fix v15.4:**
-    - **Negative Export Guard:** Twee nieuwe optionele velden toegevoegd. Koppel je 'kale prijs' sensor en de 'Zero Export' schakelaar van je omvormer. Duikt de kale prijs onder de €0.00? Dan trekt het systeem volautomatisch de export-handrem aan. Zodra de prijs weer positief is, mag de stroom het net weer op.
+    **Fix v15.4.1:**
+    - **Negative Export Guard Fix:** Verwijdert de raw_price_sensor uit de triggers. Hierdoor crasht Home Assistant niet meer met een 'Missing Input' foutmelding als je dit veld leeg laat!
+    - **Negative Export Guard:** Als de kale stroomprijs onder €0.00 duikt, trekt de export blokkade volautomatisch aan.
     - Bevat ook: EEPROM Guard, Tie-Breaker Patch, Hybrid Profiler, Night-Bypass Fix.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
@@ -320,9 +321,6 @@ trigger:
   - platform: state
     entity_id: !input frank_price_sensor
     id: "price_change"
-  - platform: state
-    entity_id: !input raw_price_sensor
-    id: "raw_price_change"
   - platform: state
     entity_id: !input battery_soc_sensor
     id: "soc_change"
@@ -1076,22 +1074,3 @@ action:
                 then:
                   - domain: mobile_app
                     type: notify
-                    device_id: !input notify_device
-                    message: "⛔ Negatieve kale stroomprijs (€{{ current_raw_price }}). Zonnepanelen export tijdelijk geblokkeerd!"
-        else:
-          - if:
-              - condition: template
-                value_template: "{{ is_state(conf_export_block, 'on') }}"
-            then:
-              - service: switch.turn_off
-                target: {entity_id: !input export_block_switch}
-              - if:
-                  - condition: template
-                    value_template: "{{ has_notify_device }}"
-                  then:
-                    - domain: mobile_app
-                      type: notify
-                      device_id: !input notify_device
-                      message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
-
-mode: single
