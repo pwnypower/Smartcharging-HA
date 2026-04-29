@@ -1,10 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.4.2 (Export Guard Fix)"
+  name: "Frank Energie - Smart Battery Manager v15.10 (The Ultimate Squeeze)"
   description: >
-    **Fix v15.4.2:**
-    - **Syntax Fix:** Lost een YAML-indentatiefout op in de notificatie-module van de Export Guard waardoor de blueprint niet opgeslagen kon worden.
-    - **Negative Export Guard:** Als de kale stroomprijs onder €0.00 duikt, trekt de export blokkade volautomatisch aan.
-    - Bevat ook: EEPROM Guard, Tie-Breaker Patch, Hybrid Profiler, Night-Bypass Fix.
+    **Fix v15.10:**
+    - **Smart Zero-Export Battery Logic:** Tijdens de 0W-Backflow periode (kale prijs negatief, all-in positief) worden 'Force Charge' en 'Smart Hold' geblokkeerd. De omvormer valt terug op puur Self-Use: zonnestroom laadt de accu gratis op, en bij wolken levert de accu stroom aan het huis (om import tegen te gaan).
+    - **Drietraps-Raket:** Positief = Vol gas (5000W), Kaal Negatief = 0W Backflow, All-in Negatief = Offgrid Modus!
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -61,21 +60,37 @@ blueprint:
         entity:
           domain: sun
 
-    # --- NEGATIVE PRICE GUARD (V15.4) ---
+    # --- DYNAMIC EXPORT & OFFGRID GUARD (V15.9) ---
     raw_price_sensor:
       name: "Sensor: Frank Energy Raw Market Price (€) [OPTIONEEL]"
-      description: "De kale marktprijs sensor (zonder belasting). Als deze onder de €0.00 duikt, activeert de Export-blokkade."
+      description: "De kale marktprijs sensor (zonder belasting)."
       default: []
       selector:
         entity:
           domain: sensor
-    export_block_switch:
-      name: "Switch: Zero Export / Export Limit [OPTIONEEL]"
-      description: "Schakelaar die de teruglevering naar het net blokkeert (AAN = Blokkade Actief / 0 Watt export)."
+    offgrid_switch:
+      name: "Switch: Offgrid Mode [OPTIONEEL]"
+      description: "Schakelaar die AAN gaat als de All-in prijs negatief is."
       default: []
       selector:
         entity:
           domain: switch
+    backflow_power_entity:
+      name: "Entity: Backflow Power Limit (Watt) [OPTIONEEL]"
+      description: "De export-limiet (number entiteit). Wordt 0W bij kale negatieve prijzen."
+      default: []
+      selector:
+        entity:
+          domain: number
+    normal_backflow_limit:
+      name: "Normal Backflow Limit (Watt)"
+      description: "De export-limiet als prijzen positief zijn (bijv. 5000)."
+      default: 5000
+      selector:
+        number:
+          min: 0
+          max: 20000
+          step: 100
 
     # --- FORECASTING & POWER ---
     solar_forecast_remaining_today:
@@ -354,7 +369,9 @@ action:
       conf_bat_pow: !input battery_power_sensor
       
       conf_raw_price: !input raw_price_sensor
-      conf_export_block: !input export_block_switch
+      conf_offgrid: !input offgrid_switch
+      conf_backflow: !input backflow_power_entity
+      p_normal_backflow: !input normal_backflow_limit
       
       conf_solar_rem: !input solar_forecast_remaining_today
       
@@ -406,6 +423,13 @@ action:
           {{ states(conf_raw_price) | float(0.0) }}
         {% else %}
           0.0
+        {% endif %}
+        
+      is_zero_export_window: >-
+        {% if conf_raw_price != [] %}
+          {{ current_raw_price < 0.0 and current_price >= 0.0 }}
+        {% else %}
+          False
         {% endif %}
         
       val_night: >-
@@ -821,6 +845,8 @@ action:
       # --- PRIORITY 4: SMART CHARGING ---
       - alias: "4. Smart Charging"
         conditions:
+          - condition: template
+            value_template: "{{ not is_zero_export_window }}"
           - condition: or
             conditions:
               - condition: and
@@ -987,6 +1013,8 @@ action:
       - alias: "6. Smart Hold"
         conditions:
           - condition: template
+            value_template: "{{ not is_zero_export_window }}"
+          - condition: template
             value_template: "{{ current_price | round(3) > charge_limit_strict | round(3) }}"
           - condition: template
             value_template: "{{ current_price | round(3) > morning_survival_limit | round(3) }}"
@@ -1053,36 +1081,83 @@ action:
           - service: switch.turn_off
             target: {entity_id: !input feed_in_switch}
 
-  # --- STEP 9: NEGATIVE EXPORT GUARD (V15.4) ---
+  # --- STEP 9: DYNAMIC EXPORT & OFFGRID GUARD (V15.9 -> 15.10) ---
   - if:
       - condition: template
-        value_template: "{{ conf_export_block != [] and conf_raw_price != [] }}"
+        value_template: "{{ conf_raw_price != [] }}"
     then:
-      - if:
-          - condition: template
-            value_template: "{{ current_raw_price < 0.0 }}"
-        then:
-          - if:
+      - choose:
+          # SCENARIO 1: All-in prijs is negatief (Zwaar negatief -> Offgrid AAN)
+          - conditions:
               - condition: template
-                value_template: "{{ is_state(conf_export_block, 'off') }}"
-            then:
-              - service: switch.turn_on
-                target: {entity_id: !input export_block_switch}
+                value_template: "{{ current_price < 0.0 }}"
+            sequence:
               - if:
                   - condition: template
-                    value_template: "{{ has_notify_device }}"
+                    value_template: "{{ conf_offgrid != [] and is_state(conf_offgrid, 'off') }}"
                 then:
-                  - domain: mobile_app
-                    type: notify
-                    device_id: !input notify_device
-                    message: "⛔ Negatieve kale stroomprijs (€{{ current_raw_price }}). Zonnepanelen export tijdelijk geblokkeerd!"
-        else:
+                  - service: switch.turn_on
+                    target: {entity_id: !input offgrid_switch}
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_notify_device }}"
+                    then:
+                      - domain: mobile_app
+                        type: notify
+                        device_id: !input notify_device
+                        message: "🏝️ All-in stroomprijs negatief (€{{ current_price }}). Offgrid modus INGESCHAKELD!"
+              - if:
+                  - condition: template
+                    value_template: "{{ conf_backflow != [] and states(conf_backflow)|float(-1) != 0.0 }}"
+                then:
+                  - service: number.set_value
+                    target: {entity_id: !input backflow_power_entity}
+                    data: {value: 0.0}
+
+          # SCENARIO 2: All-in prijs >= 0, maar Kale prijs < 0 (Licht negatief -> Backflow 0W)
+          - conditions:
+              - condition: template
+                value_template: "{{ current_price >= 0.0 }}"
+              - condition: template
+                value_template: "{{ current_raw_price < 0.0 }}"
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: "{{ conf_offgrid != [] and is_state(conf_offgrid, 'on') }}"
+                then:
+                  - service: switch.turn_off
+                    target: {entity_id: !input offgrid_switch}
+              - if:
+                  - condition: template
+                    value_template: "{{ conf_backflow != [] and states(conf_backflow)|float(-1) != 0.0 }}"
+                then:
+                  - service: number.set_value
+                    target: {entity_id: !input backflow_power_entity}
+                    data: {value: 0.0}
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_notify_device }}"
+                    then:
+                      - domain: mobile_app
+                        type: notify
+                        device_id: !input notify_device
+                        message: "⛔ Kale stroomprijs negatief (€{{ current_raw_price }}). Export geblokkeerd (Backflow = 0W), Offgrid UIT."
+
+        # SCENARIO 3: Alles positief (Normaal bedrijf -> Backflow 5000W)
+        default:
           - if:
               - condition: template
-                value_template: "{{ is_state(conf_export_block, 'on') }}"
+                value_template: "{{ conf_offgrid != [] and is_state(conf_offgrid, 'on') }}"
             then:
               - service: switch.turn_off
-                target: {entity_id: !input export_block_switch}
+                target: {entity_id: !input offgrid_switch}
+          - if:
+              - condition: template
+                value_template: "{{ conf_backflow != [] and states(conf_backflow)|float(-1) != p_normal_backflow|float }}"
+            then:
+              - service: number.set_value
+                target: {entity_id: !input backflow_power_entity}
+                data: {value: "{{ p_normal_backflow }}"}
               - if:
                   - condition: template
                     value_template: "{{ has_notify_device }}"
@@ -1090,6 +1165,6 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "✅ Kale stroomprijs is weer positief (€{{ current_raw_price }}). Export blokkade opgeheven."
+                    message: "✅ Stroomprijzen positief. Export vrijgegeven (Backflow = {{ p_normal_backflow }}W)."
 
 mode: single
