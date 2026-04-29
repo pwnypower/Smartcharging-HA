@@ -1,9 +1,10 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.10 (The Ultimate Squeeze)"
+  name: "Frank Energie - Smart Battery Manager v15.11 (Manual Override & Auto-Reset)"
   description: >
-    **Fix v15.10:**
-    - **Smart Zero-Export Battery Logic:** Tijdens de 0W-Backflow periode (kale prijs negatief, all-in positief) worden 'Force Charge' en 'Smart Hold' geblokkeerd. De omvormer valt terug op puur Self-Use: zonnestroom laadt de accu gratis op, en bij wolken levert de accu stroom aan het huis (om import tegen te gaan).
-    - **Drietraps-Raket:** Positief = Vol gas (5000W), Kaal Negatief = 0W Backflow, All-in Negatief = Offgrid Modus!
+    **Fix v15.11:**
+    - **Manual Bypass Override:** Nieuwe 'Peace of Mind' schakelaar toegevoegd. Zet je deze aan? Dan blokkeert hij de Bypass (export) en Smart Hold, waardoor de batterij domweg maximaal oplaadt via je zonnepanelen (Self-Use). 
+    - **Auto-Reset:** Zodra de batterij 95% bereikt, zet het script de handmatige schakelaar vanzelf weer uit en neemt het algoritme het automatisch weer over.
+    - Bevat ook: Drietraps Negative Guard, Solar Calibration, EEPROM Guard.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -226,13 +227,20 @@ blueprint:
           max: 100
           unit_of_measurement: "%"
 
-    # --- NOTIFICATIONS ---
+    # --- NOTIFICATIONS & OVERRIDES ---
     boost_switch:
       name: "Switch: Manual Boost"
       default: []
       selector:
         entity:
           domain: input_boolean
+    disable_bypass_switch:
+      name: "Switch: Disable Solar Bypass (Force Sun Charge) [OPTIONEEL]"
+      description: "Zet deze helper (input_boolean) aan om tijdelijk de Bypass en Smart Hold te blokkeren. Batterij laadt dan passief vol van de zon. Boven 95% gaat deze schakelaar automatisch weer uit!"
+      default: []
+      selector:
+        entity:
+          domain: ["input_boolean", "switch"]
     notify_device:
       name: "Notification Device"
       default: []
@@ -360,6 +368,7 @@ action:
       conf_price_sensor: !input frank_price_sensor
       conf_last_price: !input last_price_helper
       conf_boost: !input boost_switch
+      conf_disable_bypass: !input disable_bypass_switch
       conf_notify: !input notify_device
       conf_target_num: !input target_soc_number
       conf_switch: !input battery_reserve_switch
@@ -428,6 +437,13 @@ action:
       is_zero_export_window: >-
         {% if conf_raw_price != [] %}
           {{ current_raw_price < 0.0 and current_price >= 0.0 }}
+        {% else %}
+          False
+        {% endif %}
+        
+      is_bypass_disabled: >-
+        {% if conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and current_soc < 95 %}
+          True
         {% else %}
           False
         {% endif %}
@@ -748,6 +764,22 @@ action:
         {% set discharge_bypass = discharge_start_price | float * 0.85 %}
         {{ [peak_bypass, discharge_bypass] | max | round(3) }}
 
+  # --- STEP 7.5: AUTO-RESET MANUAL OVERRIDES ---
+  - if:
+      - condition: template
+        value_template: "{{ conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and current_soc >= 95 }}"
+    then:
+      - service: homeassistant.turn_off
+        target: {entity_id: !input disable_bypass_switch}
+      - if:
+          - condition: template
+            value_template: "{{ has_notify_device }}"
+        then:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            message: "🔋 Batterij heeft de 95% bereikt. De handmatige Bypass-blokkade is automatisch uitgeschakeld. Het algoritme neemt het weer over!"
+
   # --- STEP 8: EXECUTION (STATE ENGINE) ---
   - choose:
       # --- PRIORITY 1: REPORTING ---
@@ -965,6 +997,8 @@ action:
       - alias: "5.5. Solar Bypass (Feed-In Priority)"
         conditions:
           - condition: template
+            value_template: "{{ not is_bypass_disabled }}"
+          - condition: template
             value_template: "{{ is_daytime }}"
           - condition: template
             value_template: "{{ current_price | round(3) >= feed_in_start_price | round(3) }}"
@@ -1012,6 +1046,8 @@ action:
       # --- PRIORITY 6: SMART HOLD ---
       - alias: "6. Smart Hold"
         conditions:
+          - condition: template
+            value_template: "{{ not is_bypass_disabled }}"
           - condition: template
             value_template: "{{ not is_zero_export_window }}"
           - condition: template
@@ -1081,7 +1117,7 @@ action:
           - service: switch.turn_off
             target: {entity_id: !input feed_in_switch}
 
-  # --- STEP 9: DYNAMIC EXPORT & OFFGRID GUARD (V15.9 -> 15.10) ---
+  # --- STEP 9: DYNAMIC EXPORT & OFFGRID GUARD (V15.9 -> 15.11) ---
   - if:
       - condition: template
         value_template: "{{ conf_raw_price != [] }}"
