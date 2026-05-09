@@ -2,7 +2,7 @@ blueprint:
   name: "Frank Energie - Smart Battery Manager v15.12 (Solar-Aware Load Fix)"
   description: >
     **Fix v15.12:**
-    - **Solar-Aware Load Correction:** De huislastaftrek in `effective_solar_rem` wordt nu begrensd
+    - **Solar-Aware Load Correction:** De huislastaftrek in `effective_solar_rem` wordt nu begrensd.
       tot zonsondergang (~20:00). Avondlast wordt niet langer afgetrokken van de zonneopbrengst,
       omdat de zon dan toch al onder is. Dit voorkomt dat het script onnodig van het net laadt
       terwijl er overdag nog voldoende zonnestroom verwacht wordt.
