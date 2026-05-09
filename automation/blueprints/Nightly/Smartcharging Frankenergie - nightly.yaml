@@ -1,10 +1,9 @@
 blueprint:
-  name: "Frank Energie - Smart Battery Manager v15.11 (Manual Override & Auto-Reset)"
+  name: "Frank Energie - Smart Battery Manager v15.12 (Type-Cast Fix)"
   description: >
-    **Fix v15.11:**
-    - **Manual Bypass Override:** Nieuwe 'Peace of Mind' schakelaar toegevoegd. Zet je deze aan? Dan blokkeert hij de Bypass (export) en Smart Hold, waardoor de batterij domweg maximaal oplaadt via je zonnepanelen (Self-Use). 
-    - **Auto-Reset:** Zodra de batterij 95% bereikt, zet het script de handmatige schakelaar vanzelf weer uit en neemt het algoritme het automatisch weer over.
-    - Bevat ook: Drietraps Negative Guard, Solar Calibration, EEPROM Guard.
+    **Fix v15.12:**
+    - **Type-Cast Error Fix:** Oplossing voor de 'TypeError' waardoor de automatisering crashte. Prijzen en SoC in de nieuwe Zero-Export en Override variabelen worden nu geforceerd als getal (float) behandeld in plaats van tekst (string).
+    - Bevat: Manual Override, Drietraps Negative Guard, Solar Calibration, EEPROM Guard.
     
     STRATEGY: Predictive Profit, Solar Optimization & Hardware Protection.
   domain: automation
@@ -436,13 +435,13 @@ action:
         
       is_zero_export_window: >-
         {% if conf_raw_price != [] %}
-          {{ current_raw_price < 0.0 and current_price >= 0.0 }}
+          {{ (current_raw_price | float(0.0)) < 0.0 and (current_price | float(0.0)) >= 0.0 }}
         {% else %}
           False
         {% endif %}
         
       is_bypass_disabled: >-
-        {% if conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and current_soc < 95 %}
+        {% if conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and (current_soc | float(0)) < 95 %}
           True
         {% else %}
           False
@@ -491,7 +490,7 @@ action:
            {% if bat_w > 10 %}
              {% set grid_import = [grid_w, 0] | max %}
              {% set ratio = [ (grid_import / bat_w), 1.0 ] | min %}
-             {{ current_price * ratio }}
+             {{ (current_price | float(0.0)) * ratio }}
            {% else %}
              {{ current_price if is_active else 0.0 }}
            {% endif %}
@@ -632,7 +631,7 @@ action:
         {% set deficit = dynamic_target_soc | float - virtual_soc_solar %}
         {% if deficit > 0 %}
            {% set kwh_needed = (deficit / 100.0) * p_bat_cap | float %}
-           {{ (effective_solar_rem | float) >= kwh_needed and current_price >= 0.0 }}
+           {{ (effective_solar_rem | float) >= kwh_needed and (current_price | float(0.0)) >= 0.0 }}
         {% else %}
            True
         {% endif %}
@@ -685,9 +684,9 @@ action:
         {% else %} -999 {% endif %}
         
       active_target_soc: >-
-        {% set is_morning_charge = (morning_survival_limit | float != -999.0) and (current_price | round(3) <= morning_survival_limit | round(3)) and (current_soc < (p_morning_soc | float - 0.1)) %}
-        {% set normal_strict = (charge_limit_strict | float != -999.0) and (current_price | round(3) <= charge_limit_strict | round(3)) and not solar_charging_override %}
-        {% set normal_buffer = (current_price | round(3) <= buffer_limit | round(3)) and not solar_charging_override %}
+        {% set is_morning_charge = (morning_survival_limit | float != -999.0) and ((current_price | float(0.0)) | round(3) <= morning_survival_limit | round(3)) and (current_soc < (p_morning_soc | float - 0.1)) %}
+        {% set normal_strict = (charge_limit_strict | float != -999.0) and ((current_price | float(0.0)) | round(3) <= charge_limit_strict | round(3)) and not solar_charging_override %}
+        {% set normal_buffer = ((current_price | float(0.0)) | round(3) <= buffer_limit | round(3)) and not solar_charging_override %}
         
         {% if normal_strict or normal_buffer %}
            {{ dynamic_target_soc }}
@@ -767,7 +766,7 @@ action:
   # --- STEP 7.5: AUTO-RESET MANUAL OVERRIDES ---
   - if:
       - condition: template
-        value_template: "{{ conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and current_soc >= 95 }}"
+        value_template: "{{ conf_disable_bypass != [] and is_state(conf_disable_bypass, 'on') and (current_soc | float(0)) >= 95 }}"
     then:
       - service: homeassistant.turn_off
         target: {entity_id: !input disable_bypass_switch}
@@ -837,9 +836,9 @@ action:
               {% set target = states(conf_target_num)|float(0) %}
               {% set is_active_emerg = is_state(conf_switch, 'on') and (target == (p_min_base_soc | float + 2)) %}
               {% set threshold = (p_min_base_soc | float + 2) if is_active_emerg else (p_min_base_soc | float) %}
-              {{ current_soc < threshold }}
+              {{ (current_soc | float(0)) < threshold }}
           - condition: template
-            value_template: "{{ current_price < (p_max_cap | float * 1.5) }}"
+            value_template: "{{ (current_price | float(0.0)) < (p_max_cap | float * 1.5) }}"
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
@@ -872,7 +871,7 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "🔴 Noodladen gestart (€{{ current_price | round(3) }})"
+                    message: "🔴 Noodladen gestart (€{{ current_price | float(0.0) | round(3) }})"
 
       # --- PRIORITY 4: SMART CHARGING ---
       - alias: "4. Smart Charging"
@@ -886,39 +885,39 @@ action:
                   - condition: template
                     value_template: "{{ morning_survival_limit | float != -999.0 }}"
                   - condition: template
-                    value_template: "{{ current_price | round(3) <= morning_survival_limit | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) <= morning_survival_limit | round(3) }}"
                   - condition: template
-                    value_template: "{{ current_soc < (p_morning_soc | float - 0.1) }}"
+                    value_template: "{{ (current_soc | float(0)) < (p_morning_soc | float - 0.1) }}"
                   - condition: template
-                    value_template: "{{ current_price < p_max_cap | float }}"
+                    value_template: "{{ (current_price | float(0.0)) < p_max_cap | float }}"
                   - condition: template
-                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) < discharge_start_price | round(3) }}"
               - condition: and
                 conditions:
                   - condition: template
                     value_template: "{{ charge_limit_strict | float != -999.0 }}"
                   - condition: template
-                    value_template: "{{ current_price | round(3) <= charge_limit_strict | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) <= charge_limit_strict | round(3) }}"
                   - condition: template
-                    value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
+                    value_template: "{{ (current_soc | float(0)) < (dynamic_target_soc | float - 1) }}"
                   - condition: template
-                    value_template: "{{ current_price < p_max_cap | float }}"
+                    value_template: "{{ (current_price | float(0.0)) < p_max_cap | float }}"
                   - condition: template
                     value_template: "{{ not solar_charging_override }}"
                   - condition: template
-                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) < discharge_start_price | round(3) }}"
               - condition: and
                 conditions:
                   - condition: template
-                    value_template: "{{ current_price | round(3) <= buffer_limit | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) <= buffer_limit | round(3) }}"
                   - condition: template
-                    value_template: "{{ current_soc < (dynamic_target_soc | float - 1) }}"
+                    value_template: "{{ (current_soc | float(0)) < (dynamic_target_soc | float - 1) }}"
                   - condition: template
-                    value_template: "{{ current_price < p_max_cap | float }}"
+                    value_template: "{{ (current_price | float(0.0)) < p_max_cap | float }}"
                   - condition: template
                     value_template: "{{ not solar_charging_override }}"
                   - condition: template
-                    value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
+                    value_template: "{{ (current_price | float(0.0)) | round(3) < discharge_start_price | round(3) }}"
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
@@ -951,22 +950,22 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "🟢 Start Laden (€{{ current_price | round(3) }})"
+                    message: "🟢 Start Laden (€{{ current_price | float(0.0) | round(3) }})"
 
       # --- PRIORITY 5: DISCHARGING ---
       - alias: "5. Discharging"
         conditions:
           - condition: template
-            value_template: "{{ current_soc > (p_min_base_soc | float + 1) }}"
+            value_template: "{{ (current_soc | float(0)) > (p_min_base_soc | float + 1) }}"
           - condition: template
             value_template: >-
               {% if is_state(conf_switch, 'off') %}
-                 {{ current_price | round(3) >= (discharge_start_price | float - 0.02) | round(3) }}
+                 {{ (current_price | float(0.0)) | round(3) >= (discharge_start_price | float - 0.02) | round(3) }}
               {% else %}
-                 {{ current_price | round(3) >= discharge_start_price | round(3) }}
+                 {{ (current_price | float(0.0)) | round(3) >= discharge_start_price | round(3) }}
               {% endif %}
           - condition: template
-            value_template: "{{ current_price | round(3) > buffer_limit | round(3) }}"
+            value_template: "{{ (current_price | float(0.0)) | round(3) > buffer_limit | round(3) }}"
         sequence:
           - variables:
               was_on: "{{ is_state(conf_switch, 'on') }}"
@@ -991,7 +990,7 @@ action:
                   - domain: mobile_app
                     type: notify
                     device_id: !input notify_device
-                    message: "🔵 Start Ontladen (€{{ current_price | round(3) }})"
+                    message: "🔵 Start Ontladen (€{{ current_price | float(0.0) | round(3) }})"
 
       # --- PRIORITY 5.5: SOLAR BYPASS (NIGHT-FIX) ---
       - alias: "5.5. Solar Bypass (Feed-In Priority)"
@@ -1001,9 +1000,9 @@ action:
           - condition: template
             value_template: "{{ is_daytime }}"
           - condition: template
-            value_template: "{{ current_price | round(3) >= feed_in_start_price | round(3) }}"
+            value_template: "{{ (current_price | float(0.0)) | round(3) >= feed_in_start_price | round(3) }}"
           - condition: template
-            value_template: "{{ current_price | round(3) < discharge_start_price | round(3) }}"
+            value_template: "{{ (current_price | float(0.0)) | round(3) < discharge_start_price | round(3) }}"
           - condition: template
             value_template: "{{ conf_feed_in != [] }}"
         sequence:
@@ -1022,7 +1021,7 @@ action:
               - condition: template
                 value_template: >-
                   {% set target = states(conf_target_num)|float(0) %}
-                  {{ (target - current_soc) > 2 or (current_soc - target) >= p_lock_step }}
+                  {{ (target - (current_soc|float(0))) > 2 or ((current_soc|float(0)) - target) >= p_lock_step }}
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
@@ -1051,25 +1050,25 @@ action:
           - condition: template
             value_template: "{{ not is_zero_export_window }}"
           - condition: template
-            value_template: "{{ current_price | round(3) > charge_limit_strict | round(3) }}"
+            value_template: "{{ (current_price | float(0.0)) | round(3) > charge_limit_strict | round(3) }}"
           - condition: template
-            value_template: "{{ current_price | round(3) > morning_survival_limit | round(3) }}"
+            value_template: "{{ (current_price | float(0.0)) | round(3) > morning_survival_limit | round(3) }}"
           - condition: template
             value_template: >-
               {% if is_state(conf_switch, 'off') %}
-                 {{ current_price | round(3) < (discharge_start_price | float - 0.02) | round(3) }}
+                 {{ (current_price | float(0.0)) | round(3) < (discharge_start_price | float - 0.02) | round(3) }}
               {% else %}
-                 {{ current_price | round(3) < discharge_start_price | round(3) }}
+                 {{ (current_price | float(0.0)) | round(3) < discharge_start_price | round(3) }}
               {% endif %}
           - condition: template
             value_template: >-
               {% if conf_feed_in != [] and is_daytime %}
-                 {{ current_price | round(3) < feed_in_start_price | round(3) }}
+                 {{ (current_price | float(0.0)) | round(3) < feed_in_start_price | round(3) }}
               {% else %}
                  true
               {% endif %}
           - condition: template
-            value_template: "{{ current_soc > p_min_base_soc | float }}"
+            value_template: "{{ (current_soc | float(0)) > p_min_base_soc | float }}"
         sequence:
           - variables:
               was_off: "{{ is_state(conf_switch, 'off') }}"
@@ -1100,7 +1099,7 @@ action:
               - condition: template
                 value_template: >-
                   {% set target = states(conf_target_num)|float(0) %}
-                  {{ (target - current_soc) > 2 or (current_soc - target) >= p_lock_step }}
+                  {{ (target - (current_soc|float(0))) > 2 or ((current_soc|float(0)) - target) >= p_lock_step }}
             then:
               - service: number.set_value
                 target: {entity_id: !input target_soc_number}
@@ -1117,7 +1116,7 @@ action:
           - service: switch.turn_off
             target: {entity_id: !input feed_in_switch}
 
-  # --- STEP 9: DYNAMIC EXPORT & OFFGRID GUARD (V15.9 -> 15.11) ---
+  # --- STEP 9: DYNAMIC EXPORT & OFFGRID GUARD (V15.9 -> 15.12) ---
   - if:
       - condition: template
         value_template: "{{ conf_raw_price != [] }}"
@@ -1126,7 +1125,7 @@ action:
           # SCENARIO 1: All-in prijs is negatief (Zwaar negatief -> Offgrid AAN)
           - conditions:
               - condition: template
-                value_template: "{{ current_price < 0.0 }}"
+                value_template: "{{ (current_price | float(0.0)) < 0.0 }}"
             sequence:
               - if:
                   - condition: template
@@ -1153,9 +1152,9 @@ action:
           # SCENARIO 2: All-in prijs >= 0, maar Kale prijs < 0 (Licht negatief -> Backflow 0W)
           - conditions:
               - condition: template
-                value_template: "{{ current_price >= 0.0 }}"
+                value_template: "{{ (current_price | float(0.0)) >= 0.0 }}"
               - condition: template
-                value_template: "{{ current_raw_price < 0.0 }}"
+                value_template: "{{ (current_raw_price | float(0.0)) < 0.0 }}"
             sequence:
               - if:
                   - condition: template
