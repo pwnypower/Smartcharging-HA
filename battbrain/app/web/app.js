@@ -260,7 +260,6 @@
     const now = new Date(s.updated), t0 = new Date(pts[0].t);
     const nowX = x(Math.max(0, Math.min(1, (now - t0) / 9e5)));
     el("line", { x1: nowX, x2: nowX, y1: top1, y2: top2 + prH, class: "p-now" }, svg);
-    el("text", { x: nowX + 4, y: top2 + prH - 4, class: "p-tick" }, svg).textContent = "nu";
     // hover
     const hover = el("line", { y1: top1, y2: top2 + prH, class: "p-hover", visibility: "hidden" }, svg);
     const hit = el("rect", { x: L, y: top1, width: W - L - Rm, height: top2 + prH - top1, fill: "transparent" }, svg);
