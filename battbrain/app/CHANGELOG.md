@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+- Sturing (opt-in, `control_mode: control`): BattBrain zet de reserveschakelaar en het doel-SoC volgens het plan.
+- Veiligheid: terugval naar zelfverbruik bij twijfel, maximale laadprijs, anti-flapperen, controle of de omvormer volgt,
+  blokkade zolang je oude automatisering aan staat, doel-SoC binnen [reserve, 100].
+- Dashboard: kaart *Sturing* met status, laatste commando en knoppen Pauzeer 1 uur / Hervat.
+
 ## 0.3.0
 - Gemeten besparing: BattBrain meet per dag wat je netafname kostte en wat het zonder batterij had gekost; grafiek van de afgelopen 7 dagen.
 - Plangrafiek in drie banen: laadtoestand, wat de batterij doet, en prijs per kwartier gekleurd naar prijsniveau (laag/midden/hoog) met daggemiddelde.

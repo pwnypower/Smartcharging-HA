@@ -1,9 +1,10 @@
 # BattBrain
 
 BattBrain toont de toestand van je thuisbatterij, de stroomprijzen en de zon in één overzicht.
-In deze versie (0.2, beta) draait BattBrain in **adviesmodus**: het maakt elk kwartier een plan en legt uit
-wat het zou doen, maar het stuurt je batterij niet aan. Je bestaande automatisering blijft gewoon werken,
-en het dashboard laat zien of die hetzelfde doet als BattBrain adviseert.
+BattBrain maakt elk kwartier een plan voor je batterij en legt uit wat het doet en waarom.
+Standaard staat het in **adviesmodus**: het stuurt niets, en het dashboard laat zien of je bestaande
+automatisering hetzelfde doet als BattBrain adviseert. Pas als je `control_mode` op `control` zet,
+stuurt BattBrain de batterij zelf (zie *Sturing aanzetten*).
 
 ## Instellen
 
@@ -33,7 +34,34 @@ De voorbeelden zijn namen zoals ze vaak heten; kopieer de echte namen uit je eig
 - `export_deduction`: daarna levert een teruggeleverde kWh zoveel minder op dan de inkoopprijs (standaard €0,15).
 - `latitude` / `longitude`: locatie voor de zonnecurve; `0` = overnemen uit Home Assistant.
 - `history_days`: hoeveel dagen verbruiksgeschiedenis BattBrain gebruikt om je verbruik per uur te leren.
+- `control_mode`: `advice` (standaard, stuurt niets) of `control` (BattBrain stuurt).
+- `max_charge_price`, `min_switch_minutes`, `conflict_automation`: zie *Sturing aanzetten*.
 - `demo: true` toont voorbeeldgegevens, handig om de app te bekijken zonder instellingen.
+
+## Sturing aanzetten (beta)
+
+Doe dit pas als het advies een tijd overtuigend is geweest.
+
+1. Laat BattBrain eerst minstens een week in adviesmodus naast je huidige automatisering draaien.
+   Kijk in het dashboard of het advies klopt en hoe vaak het overeenkomt.
+2. Vul `conflict_automation` in met je huidige automatisering (bijvoorbeeld `automation.smartcharging`).
+   Zolang die aan staat, stuurt BattBrain niet: twee systemen op één batterij werken elkaar tegen.
+3. Zet die automatisering uit in Home Assistant.
+4. Zet `control_mode` op `control` en start de app opnieuw.
+5. Kijk de eerste dag mee in het dashboard (kaart *Sturing*). Met **Pauzeer 1 uur** zet je BattBrain
+   direct stil; de omvormer houdt dan zijn laatste stand. Terug naar adviesmodus = `control_mode: advice`.
+
+Wat BattBrain wel en niet doet:
+- Het verandert alleen de reserveschakelaar en het doel-SoC, niets anders.
+- Bij twijfel (geen verbinding, laadtoestand onbekend, plan ouder dan 20 minuten) zet het de reserve
+  uit, zodat de omvormer gewoon zelfverbruik doet.
+- Het laadt nooit van het net boven `max_charge_price` (standaard €0,40/kWh all-in).
+- De reserveschakelaar gaat hooguit eens per `min_switch_minutes` (standaard 10) aan.
+- Het controleert of de omvormer het commando volgt en meldt het als dat niet gebeurt.
+- Het doel-SoC blijft altijd tussen je minimale reserve en 100%.
+
+Gebruik op eigen risico: BattBrain is beta-software. Controleer de instellingen van je omvormer
+(minimale ontlaaddiepte, laadstroom) zelf; BattBrain verandert die niet.
 
 ## Hoe het advies werkt
 

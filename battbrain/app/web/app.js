@@ -68,6 +68,20 @@
     m.textContent = a.matches_current === true ? "Doet hetzelfde ✓" : a.matches_current === false ? "Doet nu iets anders" : "Onbekend";
     $("hero-agree").textContent = a.agreement_today == null ? (a.matches_current == null ? "Stel de reserveschakelaar in om te vergelijken." : "")
       : `Vandaag ${a.agreement_today}% van de tijd gelijk aan het advies`;
+    const st = s.steering || {};
+    $("hero-eyebrow").textContent = st.mode === "control" && st.active && !st.fallback ? "BattBrain doet nu" : "BattBrain adviseert nu";
+    if (st.mode === "control") {
+      $("hero-match-label").textContent = "Sturing";
+      if (st.active && !st.fallback) {
+        m.className = "match" + (a.matches_current === false ? " no" : " yes");
+        m.textContent = a.matches_current === false ? "Omvormer wordt bijgestuurd" : "BattBrain stuurt ✓";
+      } else {
+        m.className = "match no";
+        m.textContent = st.paused_until ? "Gepauzeerd" : st.fallback ? "Terugval: zelfverbruik" : "Staat stil";
+      }
+    } else {
+      $("hero-match-label").textContent = "Je huidige sturing";
+    }
     const sv = a.savings || {};
     const today = ((a.realised || {}).today) || {};
     const measuring = today.minutes != null && today.minutes < 15;
@@ -398,20 +412,53 @@
 
   function control(s) {
     const a = s.advice || {};
+    const st = s.steering || {};
     const c = a.control;
-    $("ctl-advice").textContent = !c ? "–" : c.reserve_on ? `reserve aan, doel ${fmt(c.target_soc)}%` : "reserve uit (zelfverbruik)";
-    const cur = s.control || {};
-    $("ctl-current").textContent = cur.reserve_on == null ? "onbekend" : cur.reserve_on ? `reserve aan, doel ${fmt(cur.target_soc)}%` : "reserve uit";
+    const desc = (on, t) => (on == null ? "onbekend" : on ? `reserve aan, doel ${fmt(t)}%` : "reserve uit (zelfverbruik)");
+    $("ctl-advice").textContent = c ? desc(c.reserve_on, c.target_soc) : "–";
+    $("ctl-current").textContent = desc((s.control || {}).reserve_on, (s.control || {}).target_soc);
+    const lc = st.last_command;
+    $("ctl-last").textContent = !lc ? "nog geen" : `${dayHm(lc.t)} · ${desc(lc.reserve_on, lc.target_soc)}${lc.ok ? "" : " (mislukt)"}`;
     $("ctl-export").textContent = a.export || "–";
-    $("sys").textContent = `${fmt(s.system.capacity_kwh, 1)} kWh · ${fmt(s.system.max_power_kw, 1)} kW`;
+
+    const state = st.mode !== "control" ? "advice" : st.error && !st.fallback ? "error" : st.fallback ? "fallback"
+      : st.paused_until ? "paused" : st.blocked ? "blocked" : "active";
+    $("steer").dataset.state = state;
+    $("steer-title").textContent = { advice: "Adviesmodus", active: "BattBrain stuurt je batterij", paused: "Sturing gepauzeerd",
+      blocked: "Sturing staat stil", fallback: "Terugval naar zelfverbruik", error: "Let op" }[state];
+    $("steer-msg").textContent = state === "advice" ? "BattBrain adviseert alleen. Zet control_mode op \"control\" in de app-instellingen om het te laten sturen."
+      : state === "paused" ? "Gepauzeerd tot " + dayHm(st.paused_until) + ". De omvormer houdt zijn laatste stand."
+      : state === "active" ? (lc && lc.reason ? "Laatste keuze: " + lc.reason : "Volgt het plan.")
+      : st.error || st.blocked || "";
+    $("btn-pause").hidden = !(state === "active" || state === "fallback" || state === "error");
+    $("btn-resume").hidden = state !== "paused";
+    const pill = $("mode-pill");
+    if (!s.demo && s.connected) {
+      pill.className = "pill" + (state === "active" ? " active" : state === "advice" ? "" : state === "paused" || state === "blocked" ? " demo" : " offline");
+      $("mode-text").textContent = { advice: "Adviesmodus", active: "Stuurt", paused: "Gepauzeerd", blocked: "Sturing staat stil",
+        fallback: "Terugval", error: "Let op" }[state];
+    }
   }
+
+  async function steer(action, minutes) {
+    try {
+      const r = await fetch("api/control", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, minutes }) });
+      if (r.ok) render(await r.json());
+    } catch (e) { /* next tick shows the state */ }
+  }
+  document.addEventListener("click", (ev) => {
+    if (ev.target.id === "btn-pause") steer("pause", 60);
+    if (ev.target.id === "btn-resume") steer("resume");
+  });
 
   /* ---------------- main loop ---------------- */
   function render(s) {
     notices(s);
     const pill = $("mode-pill");
     pill.className = "pill" + (s.demo ? " demo" : s.connected ? "" : " offline");
-    $("mode-text").textContent = s.demo ? "Demo · adviesmodus" : s.connected ? "Adviesmodus · stuurt niets" : "Geen verbinding";
+    const steering = (s.steering || {}).mode === "control";
+    $("mode-text").textContent = s.demo ? (steering ? "Demo · stuurt" : "Demo · adviesmodus") : s.connected ? "Adviesmodus" : "Geen verbinding";
     $("updated").textContent = "Bijgewerkt " + new Date(s.updated).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     hero(s); flow(s); kpis(s); plan(s); days(s); timeline(s); control(s);
   }

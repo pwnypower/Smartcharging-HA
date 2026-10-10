@@ -67,6 +67,8 @@ class DemoSource:
     def __init__(self, now: datetime | None = None):
         self._fixed = now  # None = follow the clock
         self._cache: dict = {}
+        self.overrides: dict[str, str] = {}   # demo inverter: what control mode switched
+        self.commands: list[tuple] = []
 
     def _now(self) -> datetime:
         return (self._fixed or datetime.now(TZ)).astimezone(TZ)
@@ -115,7 +117,19 @@ class DemoSource:
         }
 
     def get_state(self, entity_id: str) -> dict | None:
-        return self._states().get(entity_id)
+        st = self._states().get(entity_id)
+        if st is not None and entity_id in self.overrides:
+            st = dict(st, state=self.overrides[entity_id])
+        return st
+
+    def call_service(self, domain: str, service: str, data: dict) -> None:
+        """Demo inverter: remember what control mode switched, so verification works."""
+        self.commands.append((domain, service, data))
+        ent = data["entity_id"]
+        if domain == "switch":
+            self.overrides[ent] = "on" if service == "turn_on" else "off"
+        elif domain == "number":
+            self.overrides[ent] = str(data["value"])
 
     def get_config(self) -> dict:
         return {"latitude": 52.1, "longitude": 5.1}

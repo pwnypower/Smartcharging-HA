@@ -38,6 +38,11 @@ class Settings:
     longitude: float = 0.0
     history_days: int = 14
     plan_minutes: int = 5
+    # control (step 5): "advice" = only advise, "control" = BattBrain switches the battery
+    control_mode: str = "advice"
+    max_charge_price: float = 0.40       # never grid-charge above this all-in price (EUR/kWh)
+    min_switch_minutes: int = 10         # minimum time between toggles of the reserve switch
+    conflict_automation: str = ""        # e.g. automation.smartcharging; control pauses while it is on
     # runtime
     poll_seconds: int = 15
     port: int = 8099

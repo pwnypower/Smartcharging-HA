@@ -23,7 +23,7 @@ en wat later komt. De prototypebestanden zijn **referentie, geen productiecode**
 |---|---|---|
 | Dashboard — BattBrain advies | ✅ | Tekst komt uit de planner (`PlanStep.reason`), "Volgende" = eerstvolgende andere actie |
 | Dashboard — SoC / prijs / actie | ✅ | Prijs in €/kWh all-in (Frank), niet in ct kaal |
-| Dashboard — handmatige besturing | ⏳ stap 5 | Pas als de app mag sturen; in adviesmodus verborgen |
+| Dashboard — handmatige besturing | ✅ v0.4 | Kaart *Sturing*: status, laatste commando, Pauzeer 1 uur / Hervat (geen handmatig laden/ontladen) |
 | Dashboard — dagplan | ✅ | Acties per kwartier/uur uit het plan: laden net / laden zon / vasthouden / ontladen / zelfverbruik |
 | Dashboard — energiestroom | ✅ | Live uit HA-sensoren |
 | Dashboard — algoritme-drempels | 🔄 | Wordt **Plan & voorspelling**: zon, verbruik, verwachte besparing, "waarom dit plan" |
@@ -74,4 +74,4 @@ Regel sinds v0.3: één kleur betekent één ding. Actiekleuren alleen in de act
 2. ✅ Kern: `app/battbrain_core` — planner, voorspellingen, besparing, met tests
 3. ✅ App-skelet: HA-verbinding, live SoC/prijs/zon/energiestroom/prijsverloop in het dashboard (alleen lezen)
 4. ✅ Adviseren: plan, advies met reden, beslissingenlogboek, vergelijking met de huidige sturing (% overeenkomst)
-5. Sturen: reserve-schakelaar + doel-SoC, met zelfverbruik als veilige terugval
+5. ✅ Sturen (opt-in): reserve-schakelaar + doel-SoC, met zelfverbruik als veilige terugval, prijsplafond, anti-flapperen, controle en pauzeknop

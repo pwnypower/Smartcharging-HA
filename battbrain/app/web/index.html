@@ -25,7 +25,7 @@
       <div class="hero-main">
         <div class="orb" aria-hidden="true"><div class="orb-ring"></div><svg viewBox="0 0 24 24" class="orb-icon" id="hero-icon"></svg></div>
         <div class="hero-text">
-          <div class="eyebrow">BattBrain adviseert nu</div>
+          <div class="eyebrow" id="hero-eyebrow">BattBrain adviseert nu</div>
           <h1 id="hero-label">–</h1>
           <p class="hero-reason" id="hero-reason">Het plan wordt berekend…</p>
           <div class="hero-meta">
@@ -36,7 +36,7 @@
       </div>
       <div class="hero-side">
         <div class="side-block">
-          <div class="side-label">Je huidige sturing</div>
+          <div class="side-label" id="hero-match-label">Je huidige sturing</div>
           <div class="match" id="hero-match">–</div>
           <div class="side-sub" id="hero-agree"></div>
         </div>
@@ -103,15 +103,22 @@
       </article>
     </section>
 
-    <section class="card">
-      <div class="card-label">Sturing en tarief</div>
+    <section class="card steer" id="steer" data-state="advice">
+      <div class="card-head">
+        <div><div class="card-label">Sturing</div><h2 id="steer-title">Adviesmodus</h2></div>
+        <div class="steer-actions">
+          <button class="btn" id="btn-pause" type="button" hidden>Pauzeer 1 uur</button>
+          <button class="btn primary" id="btn-resume" type="button" hidden>Hervat sturing</button>
+        </div>
+      </div>
+      <p class="steer-msg" id="steer-msg"></p>
       <dl class="rows cols">
-        <div><dt>BattBrain zou zetten</dt><dd id="ctl-advice">–</dd></div>
-        <div><dt>Je automatisering staat op</dt><dd id="ctl-current">–</dd></div>
+        <div><dt>BattBrain wil</dt><dd id="ctl-advice">–</dd></div>
+        <div><dt>Omvormer staat op</dt><dd id="ctl-current">–</dd></div>
+        <div><dt>Laatste commando</dt><dd id="ctl-last">–</dd></div>
         <div><dt>Teruglevering</dt><dd id="ctl-export">–</dd></div>
-        <div><dt>Batterij</dt><dd id="sys">–</dd></div>
       </dl>
-      <p class="hint">Adviesmodus: BattBrain verandert niets aan je batterij. Je huidige automatisering blijft sturen.</p>
+      <p class="hint" id="steer-hint">BattBrain verandert alleen de reserveschakelaar en het doel-SoC. Bij twijfel (geen verbinding, oud plan) zet het de batterij terug op gewoon zelfverbruik.</p>
     </section>
   </main>
   <script src="app.js"></script>

@@ -3,7 +3,7 @@
 Slimme sturing van een thuisbatterij op basis van dynamische prijzen, zonvoorspelling en je eigen
 verbruikspatroon, klaar voor het einde van de salderingsregeling (2027).
 
-> Status: beta 0.3. Stap 1 t/m 4 zijn klaar: BattBrain draait in adviesmodus (plan, advies met reden, vergelijking met je huidige sturing). Het stuurt je batterij nog niet aan.
+> Status: beta 0.4. Stap 1 t/m 5 zijn klaar. Standaard draait BattBrain in adviesmodus; sturen zet je zelf aan (`control_mode: control`, zie [`app/DOCS.md`](app/DOCS.md)).
 
 | Map | Inhoud |
 |---|---|

@@ -7,11 +7,14 @@ import mimetypes
 import os
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .advisor import Advisor
+from .controller import Controller
 from .config import Settings
+from .prices import TZ
 from .snapshot import build_snapshot
 
 log = logging.getLogger("battbrain")
@@ -26,6 +29,7 @@ class Poller:
     def __init__(self, settings: Settings, source, ping=lambda: True):
         self.settings, self.source, self.ping = settings, source, ping
         self.advisor = Advisor(settings, source)
+        self.controller = Controller(settings, source)
         self.snapshot: dict = {}
         self.lock = threading.Lock()
         self._stop = threading.Event()
@@ -35,6 +39,7 @@ class Poller:
             connected = self.ping()
             snap = build_snapshot(self.settings, self.source, connected=connected)
             snap["advice"] = self.advisor.update(snap) if connected else {"error": "Geen verbinding"}
+            snap["steering"] = self.controller.apply(snap, snap["advice"], datetime.now(TZ))
         except Exception as e:  # keep serving the last good snapshot
             log.warning("Snapshot mislukt: %s", e)
             snap = dict(self.snapshot, connected=False, error=str(e))
@@ -78,6 +83,26 @@ def make_handler(poller: Poller, restrict: bool):
                 return self._send(404, b"Niet gevonden", "text/plain")
             ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             return self._send(200, target.read_bytes(), ctype)
+
+        def do_POST(self):
+            if restrict and self.client_address[0] not in INGRESS_PEERS:
+                return self._send(403, b"Alleen via Home Assistant", "text/plain")
+            if self.path.split("?", 1)[0].rstrip("/") != "/api/control":
+                return self._send(404, b"Niet gevonden", "text/plain")
+            try:
+                length = min(int(self.headers.get("Content-Length") or 0), 4096)
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, TypeError):
+                return self._send(400, b"Ongeldige aanvraag", "text/plain")
+            now = datetime.now(TZ)
+            if body.get("action") == "pause":
+                poller.controller.pause(int(body.get("minutes", 60)), now)
+            elif body.get("action") == "resume":
+                poller.controller.resume()
+            else:
+                return self._send(400, b"Onbekende actie", "text/plain")
+            snap = poller.refresh()
+            return self._send(200, json.dumps(snap).encode(), "application/json")
 
     return Handler
 

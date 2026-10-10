@@ -1,9 +1,11 @@
-"""Read-only Home Assistant client.
+"""Home Assistant client.
 
 Inside the add-on it talks to Home Assistant through the Supervisor proxy with the
 token the Supervisor provides. For development set HA_URL + HA_TOKEN (a long-lived
-access token). This client deliberately has no method that changes anything in
-Home Assistant: step 3 of the app only reads.
+access token).
+
+Reading is unrestricted. The only write, `call_service`, is used by the controller
+(control mode, opt-in) and only for the reserve switch and the target-SoC entity.
 """
 from __future__ import annotations
 
@@ -33,6 +35,14 @@ class HAClient:
             "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return json.load(resp)
+
+    def call_service(self, domain: str, service: str, data: dict) -> None:
+        body = json.dumps(data).encode()
+        req = urllib.request.Request(f"{self.base}/api/services/{domain}/{service}", data=body, method="POST",
+                                     headers={"Authorization": f"Bearer {self.token}",
+                                              "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            resp.read()
 
     def ping(self) -> bool:
         try:
