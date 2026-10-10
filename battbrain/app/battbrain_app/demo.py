@@ -158,8 +158,10 @@ class DemoSource:
             steps = [s for s in self._day(day0) if k > 0 or s.start + timedelta(minutes=15) <= now]
             cost = sum(s.cost for s in steps)
             nb = sum((load_kw(s.start) - solar_kw(s.start)) / 4 * prices[s.start.hour] for s in steps)  # salderen
+            solar = sum(solar_kw(s.start) / 4 for s in steps)
             out.append({"day": day0.date().isoformat(), "cost": round(cost, 3), "cost_no_battery": round(nb, 3),
-                        "minutes": 15 * len(steps)})
+                        "minutes": 15 * len(steps), "solar_kwh": round(solar, 3),
+                        "solar_forecast_kwh": round(solar / 0.85, 3)})  # demo: forecast 15% too optimistic
         return out
 
 

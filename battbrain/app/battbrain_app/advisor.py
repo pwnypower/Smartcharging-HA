@@ -149,6 +149,22 @@ class Advisor:
         d["import_kwh"] = round(d.get("import_kwh", 0.0) + max(grid, 0.0), 4)
         d["export_kwh"] = round(d.get("export_kwh", 0.0) + max(-grid, 0.0), 4)
         d["minutes"] = round(d.get("minutes", 0.0) + dt / 60, 2)
+        if p.get("solar_w") is not None:
+            d["solar_kwh"] = round(d.get("solar_kwh", 0.0) + max(p["solar_w"], 0.0) * dt / 3.6e6, 4)
+        fc = (snap.get("solar") or {}).get("today_kwh")
+        if fc is not None and "solar_forecast_kwh" not in d and now.hour < 10:
+            d["solar_forecast_kwh"] = fc  # the morning forecast, before the day's own updates
+
+    def solar_factor(self, now: datetime) -> tuple[float, int]:
+        """Correction for the solar forecast from full past days: (factor, days used)."""
+        pairs = []
+        for k in range(1, 15):
+            d = self.days.get((now.date() - timedelta(days=k)).isoformat())
+            if d and d.get("solar_forecast_kwh") and d.get("minutes", 0) >= 20 * 60 and "solar_kwh" in d:
+                pairs.append((d["solar_forecast_kwh"], d["solar_kwh"]))
+        if len(pairs) < 3:
+            return 1.0, len(pairs)
+        return core.SolarCalibration().fit(pairs).factor, len(pairs)
 
     def realised(self, now: datetime) -> dict:
         days = []
@@ -183,8 +199,10 @@ class Advisor:
                 self._refresh_load_profile(now)
                 lat, lon = self._location()
                 end = max(prices) + timedelta(hours=1)
-                curve = solar_curve(now, snap["solar"].get("remaining_kwh"), snap["solar"].get("tomorrow_kwh"),
-                                    lat, lon, end)
+                factor, _ = self.solar_factor(now)
+                rem, tom = snap["solar"].get("remaining_kwh"), snap["solar"].get("tomorrow_kwh")
+                curve = solar_curve(now, None if rem is None else rem * factor,
+                                    None if tom is None else tom * factor, lat, lon, end)
                 slots = []
                 for sl in core.build_slots(now, prices, lambda t: curve.get(t, 0.0), self.load):
                     exp = export_price_fn(self.s, sl.start.date())(sl.price)
@@ -236,6 +254,7 @@ class Advisor:
                       "price": round(st.price, 4)} for st in steps],
             "log": list(reversed(self.log[-30:])),
             "realised": self.realised(now),
+            "solar_correction": dict(zip(("factor", "days"), self.solar_factor(now))),
             "full_at": next((st.start.isoformat() for st in steps if st.soc_end >= 99.5), None),
             "empty_at": next((st.start.isoformat() for st in steps
                               if st.soc_end <= self.battery.reserve_soc + 0.5), None),

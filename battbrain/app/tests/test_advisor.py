@@ -96,6 +96,29 @@ class AdvisorTest(unittest.TestCase):
         today = adv.realised(NOW)["today"]
         self.assertAlmostEqual(today["saving"], round(800 * 60 / 3.6e6 * 0.30, 3))
 
+    def test_solar_factor_needs_three_full_days(self):
+        adv = Advisor(Settings(data_dir=self.tmp), object())
+        for k in (1, 2):
+            day = (NOW.date() - timedelta(days=k)).isoformat()
+            adv.days[day] = {"minutes": 1440, "solar_kwh": 8.0, "solar_forecast_kwh": 10.0, "cost": 0, "cost_no_battery": 0}
+        self.assertEqual(adv.solar_factor(NOW), (1.0, 2))
+        day = (NOW.date() - timedelta(days=3)).isoformat()
+        adv.days[day] = {"minutes": 1440, "solar_kwh": 8.0, "solar_forecast_kwh": 10.0, "cost": 0, "cost_no_battery": 0}
+        f, n = adv.solar_factor(NOW)
+        self.assertEqual(n, 3)
+        self.assertAlmostEqual(f, 0.8)
+
+    def test_meter_records_solar_and_morning_forecast(self):
+        adv = Advisor(Settings(data_dir=self.tmp), object())
+        morning = NOW.replace(hour=8)
+        sn = {"price": {"now": 0.2}, "power": {"grid_w": 0.0, "battery_w": 0.0, "solar_w": 3600.0},
+              "solar": {"today_kwh": 12.0}}
+        adv.meter(sn, morning)
+        adv.meter(sn, morning + timedelta(seconds=60))
+        d = adv.days[NOW.date().isoformat()]
+        self.assertAlmostEqual(d["solar_kwh"], 0.06)
+        self.assertEqual(d["solar_forecast_kwh"], 12.0)
+
     def test_demo_is_consistent_with_its_own_plan(self):
         snap = build_snapshot(self.s, self.src, now=NOW)
         p = snap["power"]

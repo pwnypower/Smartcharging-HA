@@ -87,7 +87,7 @@ def build_snapshot(s: Settings, ha: StateSource, now: datetime | None = None,
             "tomorrow_kwh": _number(states["solar_tomorrow"]),
         },
         "control": {
-            "reserve_on": None if not reserve else reserve.get("state") == "on",
+            "reserve_on": None if not reserve or reserve.get("state") not in ("on", "off") else reserve.get("state") == "on",
             "target_soc": _number(states["target_soc"]),
             "mode": "advies (alleen lezen)",
         },

@@ -32,9 +32,14 @@ class Poller:
         self.controller = Controller(settings, source)
         self.snapshot: dict = {}
         self.lock = threading.Lock()
+        self.cycle = threading.Lock()  # one refresh at a time: the controller must never run twice at once
         self._stop = threading.Event()
 
     def refresh(self) -> dict:
+        with self.cycle:
+            return self._refresh()
+
+    def _refresh(self) -> dict:
         try:
             connected = self.ping()
             snap = build_snapshot(self.settings, self.source, connected=connected)
@@ -75,7 +80,9 @@ def make_handler(poller: Poller, restrict: bool):
             path = self.path.split("?", 1)[0]
             if path in ("/api/snapshot", "/api/snapshot/"):
                 with poller.lock:
-                    snap = poller.snapshot or poller.refresh()
+                    snap = poller.snapshot
+                if not snap:  # never call refresh while holding the snapshot lock
+                    snap = poller.refresh()
                 return self._send(200, json.dumps(snap).encode(), "application/json")
             rel = "index.html" if path in ("", "/") else path.lstrip("/")
             target = (WEB_DIR / rel).resolve()

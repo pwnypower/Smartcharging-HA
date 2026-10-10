@@ -83,6 +83,11 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(snap["missing_entities"], ["sensor.gone"])
         self.assertIn("grid_power", snap["unconfigured"])
 
+    def test_unavailable_switch_is_unknown(self):
+        s = Settings(reserve_switch_entity="switch.r")
+        snap = build_snapshot(s, FakeHA({"switch.r": {"state": "unavailable", "attributes": {}}}), now=NOW)
+        self.assertIsNone(snap["control"]["reserve_on"])
+
     def test_no_calls_when_disconnected(self):
         ha = FakeHA({})
         snap = build_snapshot(Settings(soc_entity="sensor.soc"), ha, now=NOW, connected=False)

@@ -86,7 +86,10 @@
     const today = ((a.realised || {}).today) || {};
     const measuring = today.minutes != null && today.minutes < 15;
     $("sav-today").textContent = today.saving == null || measuring ? "–" : signedEur(today.saving);
-    $("sav-today-sub").textContent = measuring ? "vandaag: meten is net begonnen" : "vandaag tot nu, gemeten";
+    $("sav-today").classList.toggle("neg", !measuring && today.saving != null && today.saving < 0);
+    $("sav-today-sub").textContent = measuring ? "vandaag: meten is net begonnen"
+      : today.saving < 0 && sv.vs_no_battery > 0 ? "vandaag tot nu: laden kost nu, levert later vandaag op"
+      : "vandaag tot nu, gemeten";
     $("sav-plan").textContent = sv.vs_no_battery == null ? "–" : signedEur(sv.vs_no_battery);
     $("sav-plan-sub").textContent = sv.horizon_end ? "verwacht tot " + dayHm(sv.horizon_end) : "verwacht met dit plan";
     $("sav-self").textContent = sv.vs_self_use == null ? "" : `Daarvan ${signedEur(sv.vs_self_use)} door slim plannen, t.o.v. alleen zelfverbruik`;
@@ -212,7 +215,10 @@
     $("price-range").textContent = avg == null ? "" : `gem. vandaag ${eur(avg, 3)} · ${eur(s.price.today_min, 3)} – ${eur(s.price.today_max, 3)}`;
     spark(todayPts, avg, new Date(s.updated));
     $("solar-remaining").textContent = fmt(s.solar.remaining_kwh, 1);
-    $("solar-sub").textContent = `Vandaag ${fmt(s.solar.today_kwh, 1)} kWh · morgen ${fmt(s.solar.tomorrow_kwh, 1)} kWh`;
+    const sc = a.solar_correction || {};
+    $("solar-sub").textContent = `Vandaag ${fmt(s.solar.today_kwh, 1)} kWh · morgen ${fmt(s.solar.tomorrow_kwh, 1)} kWh`
+      + (sc.days >= 3 && Math.abs(sc.factor - 1) > 0.02 ? ` · BattBrain rekent met ×${nf(2).format(sc.factor)} (gemeten over ${sc.days} dagen)`
+        : sc.days != null && sc.days < 3 ? ` · zoncorrectie na ${3 - sc.days} volle dag${3 - sc.days === 1 ? "" : "en"} meten` : "");
   }
 
   function spark(pts, avg, now) {

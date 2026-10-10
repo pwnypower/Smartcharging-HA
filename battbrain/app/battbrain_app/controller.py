@@ -75,6 +75,10 @@ class Controller:
 
         cur_on = (snap.get("control") or {}).get("reserve_on")
         cur_target = (snap.get("control") or {}).get("target_soc")
+        if snap.get("connected") and cur_on is None:
+            # switch unavailable/unknown: commands would be blind, so do nothing and say so
+            st["error"] = "De reserveschakelaar is niet beschikbaar in Home Assistant; BattBrain wacht."
+            return self._done(st)
         self._verify(cur_on, cur_target, st)
 
         reason = self._stale_reason(snap, advice, now)

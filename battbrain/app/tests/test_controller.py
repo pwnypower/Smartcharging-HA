@@ -116,6 +116,14 @@ class ControllerTest(unittest.TestCase):
             self.assertTrue(st["fallback"])
             self.assertEqual(ha.calls[-1][1], "turn_off")
 
+    def test_unavailable_switch_means_hands_off(self):
+        ha = FakeHA()
+        sn = snap()
+        sn["control"]["reserve_on"] = None
+        st = Controller(settings(), ha).apply(sn, advice(), NOW)
+        self.assertEqual(ha.calls, [])
+        self.assertIn("niet beschikbaar", st["error"])
+
     def test_conflicting_automation_blocks(self):
         ha = FakeHA({"automation.smartcharging": {"state": "on"}})
         st = Controller(settings(conflict_automation="automation.smartcharging"), ha).apply(snap(), advice(), NOW)

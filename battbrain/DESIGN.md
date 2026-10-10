@@ -12,7 +12,7 @@ en wat later komt. De prototypebestanden zijn **referentie, geen productiecode**
 | Rekenhart | `app/battbrain_core`: planner met voorspellingen (geen vaste prijsdrempels) | Simulatie 7–9 okt 2026: drempels verliezen, planner wint in 2026 en 2027 |
 | Profiel | v1: alleen **Max rendement** | Eerst één profiel goed; Zelfvoorzienend/Eco later als optimalisatiedoel |
 | Thema | v1: alleen **donker**; tokens voor licht staan klaar | Prototype is dark-first |
-| Lettertypen | Clash Display + Satoshi **meeleveren in de app** (nog te doen; v0.1 valt terug op het systeemlettertype) | HA draait vaak zonder internet; geen CDN |
+| Lettertypen | Meegeleverd: Space Grotesk + Manrope (de fallbacks uit het design, SIL OFL). Clash Display/Satoshi worden gebruikt als ze lokaal geïnstalleerd zijn | HA draait vaak zonder internet; geen CDN |
 | Besparingen | Alleen berekende bedragen t.o.v. "geen batterij" en "alleen zelfverbruik" | Geen marketingprognoses in de app |
 | Sturing | Via reserve-schakelaar + doel-SoC (zelfde als de blueprint) | Werkt op bestaande Solis-setup |
 | Uitrol | Eerst alleen lezen → adviseren → pas daarna sturen | Veiligheid: niets aan de batterij tot het advies bewezen is |

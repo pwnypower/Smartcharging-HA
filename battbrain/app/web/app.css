@@ -1,5 +1,12 @@
-/* BattBrain — tokens from the design package (design/src/enhanced-styles.css), dark theme first.
-   Fonts: Clash Display / Satoshi are not bundled yet; the stack falls back to the system font. */
+/* BattBrain — tokens from the design package (design/src/enhanced-styles.css), dark theme first. */
+/* Bundled fonts (SIL Open Font License, see fonts/LICENSE-*): the design's own fallbacks for
+   Clash Display / Satoshi, so the app looks right without internet. */
+@font-face { font-family: "Space Grotesk"; font-weight: 500; font-display: swap; src: url("fonts/space-grotesk-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-weight: 600; font-display: swap; src: url("fonts/space-grotesk-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 400; font-display: swap; src: url("fonts/manrope-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 500; font-display: swap; src: url("fonts/manrope-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 600; font-display: swap; src: url("fonts/manrope-latin-600-normal.woff2") format("woff2"); }
+
 :root {
   --font-display: "Clash Display", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body: "Satoshi", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -222,3 +229,4 @@ h2 { font-size: 20px; }
 .btn.primary { color: #052012; background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-color: transparent; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pill.active { color: var(--accent); }
+.savings .big.neg { color: var(--price-mid); }

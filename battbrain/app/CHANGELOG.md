@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+- Zoncorrectie: BattBrain meet per dag de echte zonopbrengst en vergelijkt die met de ochtendvoorspelling;
+  na 3 volle dagen rekent het plan met die correctie.
+- Veiligheid: een reserveschakelaar die "niet beschikbaar" is, telt als onbekend; BattBrain stuurt dan niets.
+- Eén ronde tegelijk: een klik op pauzeren kan niet meer samenvallen met een lopende sturingsronde.
+- Lettertypes Space Grotesk en Manrope meegeleverd (werkt zonder internet).
+- Een negatieve besparing tot nu toe (laden kost nu, levert later op) staat niet meer in het groen en krijgt uitleg.
+
 ## 0.4.0
 - Sturing (opt-in, `control_mode: control`): BattBrain zet de reserveschakelaar en het doel-SoC volgens het plan.
 - Veiligheid: terugval naar zelfverbruik bij twijfel, maximale laadprijs, anti-flapperen, controle of de omvormer volgt,
