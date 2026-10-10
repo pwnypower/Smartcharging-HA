@@ -15,6 +15,9 @@ oplevert op zijn eigen data, en wij hem met één set materiaal kunnen pitchen: 
 | 5 | Versie 1.0.0, AGPL-3.0-licentie, changelog, documentatie, privacyverklaring | Open source moet je kunnen controleren | ✅ |
 | 6 | Tests in CI op elke push | Vertrouwen in een product dat je batterij stuurt | ✅ |
 
+Niet getest: de add-on op een echte Home Assistant-installatie en de Docker-build (CI bouwt en start
+het image bij de eerste push; hier was geen Docker-daemon).
+
 Niet in 1.0 (bewust): Engelse interface, andere omvormers dan via HA-entiteiten, een hosted versie.
 Die staan op de roadmap in het pitchmateriaal.
 
@@ -22,10 +25,10 @@ Die staan op de roadmap in het pitchmateriaal.
 
 | # | Onderdeel | Status |
 |---|---|---|
-| 7 | Landingspagina (zelfhosten gratis, hosted later, wachtlijst) | ✅ |
+| 7 | Landingspagina (zelfhosten gratis, hosted later, wachtlijst): [`marketing/site/`](marketing/site/) | ✅ (wachtlijst nog niet gekoppeld) |
 | 8 | Pitchdeck (probleem, oplossing, bewijs, markt, verdienmodel, roadmap, vraag) | ✅ |
-| 9 | Launchposts: Tweakers, HA Community (Engels), Reddit, LinkedIn, Mastodon/X, persbericht | ✅ |
-| 10 | Schermafbeeldingen van 1.0 en een FAQ | ✅ |
+| 9 | Launchposts: Tweakers, HA Community (Engels), Reddit, LinkedIn, Mastodon/X, persbericht, B2B-mails: [`marketing/launch-posts.md`](marketing/launch-posts.md) | ✅ |
+| 10 | Schermafbeeldingen van 1.0 ([`docs/screenshots/`](docs/screenshots/)) en een FAQ (in de landingspagina) | ✅ |
 
 ## Wat nog bij jou ligt
 
