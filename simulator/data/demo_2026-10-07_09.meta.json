@@ -1,8 +1,0 @@
-{
-  "source_note": "Invoer afgelezen van screenshots (Frank-app prijzen, HA-energiedashboard per uur, 7–9 okt 2026); waarden zijn benaderingen (±0,1 kWh). Batterijgrootte geschat uit laadcurve.",
-  "start_soc": 25,
-  "start_last_paid": 0.25,
-  "battery": {"capacity_kwh": 5.1, "max_power_kw": 3.0, "eta_charge": 0.95, "eta_discharge": 0.95, "hw_min_soc": 14},
-  "blueprint": {},
-  "actual_grid_import": {"2026-10-07": 3.78, "2026-10-08": 3.22, "2026-10-09": 8.67}
-}

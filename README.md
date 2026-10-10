@@ -3,6 +3,12 @@
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fpwnypower%2FSmartcharging-HA%2Fblob%2Fmain%2Fautomation%2Fblueprints%2FSmartcharging%20frankenergie.yaml)
 
 
+> **🧠 Nieuw: BattBrain.** Wil je meer dan deze blueprint? BattBrain is de opvolger als Home Assistant-app:
+> een planner die elk kwartier rekent met prijzen, zonverwachting en je eigen verbruik, elke keuze uitlegt
+> en op je eigen data van vorige week laat zien wat hij had opgeleverd. Open source, draait lokaal.
+> In onze meting (3 dagen, 5,1 kWh) deed BattBrain het beter dan deze blueprint, zeker na het einde van salderen.
+> 👉 [github.com/pwnypower/lekkere-repo-voor-mij](https://github.com/pwnypower/lekkere-repo-voor-mij)
+
 **The ultimate "Set & Forget" automation for home batteries with dynamic energy tariffs.**
 
 This blueprint turns your Home Assistant into an intelligent energy manager. It calculates the optimal charging schedule based on **day-ahead prices** (Frank Energie, Tibber, Zonneplan), **solar forecasts**, and your **battery usage**.
