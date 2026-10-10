@@ -59,10 +59,14 @@ en wat later komt. De prototypebestanden zijn **referentie, geen productiecode**
 | Prijsgrafiek gecombineerd met plan of voorspelling | Energy Flow & Price Card, Genergy Dashboard (EMHASS-overlay) | Plangrafiek: laadtoestand boven, prijs per kwartier gekleurd naar actie eronder (geen dubbele as) |
 | Goedkope uren uitlichten | Apps voor dynamische tarieven | Label "Goedkoopste 2 uur" |
 | Eerlijk zelfverbruik tonen | Energiedashboards van omvormers | "x% van je verbruik uit zon en batterij" |
+| Prijsbalken gekleurd naar prijsniveau, daggemiddelde, "boven/onder verwachting" per dag | Frank Energie-app | Prijskaart met minigrafiek + gemiddelde; plangrafiek kleurt prijs naar niveau; besparing per dag (groen/rood) |
+| Opbrengst vandaag + grafiek van batterijniveau met actieve modus | Zonneplan-app (thuisbatterij) | "Besparing vandaag, gemeten" in de hero; aparte actiebaan onder de laadtoestand |
 
 Kleuren per actie: laden van net = blauw (`--c-charge`), zon opslaan = geel (`--c-pv`), ontladen = oranje
 (`--c-discharge`), vasthouden = lila (`--c-hold`, nieuw), zelfverbruik = grijs (`--c-idle`).
 Animaties staan uit bij `prefers-reduced-motion`.
+
+Regel sinds v0.3: één kleur betekent één ding. Actiekleuren alleen in de actiebaan en het logboek; prijskleuren (groen/oranje/rood) alleen voor prijsniveau.
 
 ## Bouwvolgorde
 

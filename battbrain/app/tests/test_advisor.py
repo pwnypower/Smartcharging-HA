@@ -83,6 +83,25 @@ class AdvisorTest(unittest.TestCase):
         again = Advisor(self.s, self.src)
         self.assertEqual(len(again.log), 1)
 
+    def test_meter_measures_saving_against_no_battery(self):
+        adv = Advisor(Settings(data_dir=self.tmp), object())  # a source without demo history
+        snap = {"price": {"now": 0.30}, "power": {"grid_w": 200.0, "battery_w": -800.0}}
+        adv.meter(snap, NOW)                               # first call only starts the clock
+        adv.meter(snap, NOW + timedelta(seconds=60))
+        d = adv.days[NOW.date().isoformat()]
+        self.assertAlmostEqual(d["cost"], 200 * 60 / 3.6e6 * 0.30, places=5)
+        self.assertAlmostEqual(d["cost_no_battery"], 1000 * 60 / 3.6e6 * 0.30, places=5)
+        adv.meter(snap, NOW + timedelta(minutes=10))       # gap: skipped
+        self.assertAlmostEqual(d["minutes"], 1.0)
+        today = adv.realised(NOW)["today"]
+        self.assertAlmostEqual(today["saving"], round(800 * 60 / 3.6e6 * 0.30, 3))
+
+    def test_demo_is_consistent_with_its_own_plan(self):
+        snap = build_snapshot(self.s, self.src, now=NOW)
+        p = snap["power"]
+        self.assertAlmostEqual(p["house_w"], p["grid_w"] + p["solar_w"] - p["battery_w"], places=3)
+        self.assertGreaterEqual(snap["soc"], 14)
+
     def test_errors_without_soc_or_prices(self):
         adv = Advisor(Settings(data_dir=self.tmp), self.src)
         self.assertIn("error", adv.update({"soc": None, "solar": {}, "control": {}}, NOW))

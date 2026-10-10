@@ -124,8 +124,8 @@ def make_plan(soc: float, slots: list[Slot], bat: Battery, resolution_pct: float
             action = Action.CHARGE_SOLAR
         elif d > EPS:
             action = Action.DISCHARGE
-        elif slot.net_kwh > EPS and socs[a] > reserve + resolution_pct / 2:
-            action = Action.HOLD
+        elif slot.net_kwh > EPS and socs[a] > reserve + max(3.0, resolution_pct / 2):
+            action = Action.HOLD  # keeping a meaningful amount for later
         else:
             action = Action.IDLE
         steps.append(PlanStep(slot.start, action, socs[a], socs[b], slot.price, grid, _cost(grid, slot)))

@@ -55,7 +55,12 @@ class Advisor:
         self.log_path = os.path.join(settings.data_dir, "battbrain_log.json")
         self.log: list[dict] = []
         self.agree: dict = {"day": None, "match": 0, "total": 0}
+        self.days: dict[str, dict] = {}   # realised results per day
+        self._last_meter: datetime | None = None
         self._load_log()
+        if hasattr(source, "past_days"):  # demo: pre-filled history
+            for d in source.past_days():
+                self.days.setdefault(d["day"], d)
 
     # --- persistence -------------------------------------------------------------------
     def _load_log(self):
@@ -64,6 +69,7 @@ class Advisor:
                 data = json.load(fh)
             self.log = data.get("log", [])[-LOG_KEEP:]
             self.agree = data.get("agree", self.agree)
+            self.days = data.get("days", {})
         except (OSError, ValueError):
             pass
 
@@ -71,7 +77,9 @@ class Advisor:
         try:
             os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
             with open(self.log_path, "w") as fh:
-                json.dump({"log": self.log[-LOG_KEEP:], "agree": self.agree}, fh)
+                keep = sorted(self.days)[-60:]
+                json.dump({"log": self.log[-LOG_KEEP:], "agree": self.agree,
+                           "days": {k: self.days[k] for k in keep}}, fh)
         except OSError as e:
             log.debug("Logboek niet opgeslagen: %s", e)
 
@@ -114,10 +122,51 @@ class Advisor:
             log.warning("Verbruiksgeschiedenis niet geladen: %s", e)
         self.load_fitted = now
 
+    # --- realised results -----------------------------------------------------------------
+    def meter(self, snap: dict, now: datetime):
+        """Integrate what actually happened: grid cost with the battery, and without it.
+
+        Without the battery the grid would have supplied grid - battery (battery charging
+        is extra import, discharging replaced import). Gaps longer than 2 minutes are skipped.
+        """
+        p = snap.get("power") or {}
+        price = (snap.get("price") or {}).get("now")
+        last, self._last_meter = self._last_meter, now
+        if last is None or price is None or p.get("grid_w") is None:
+            return
+        dt = (now - last).total_seconds()
+        if dt <= 0 or dt > 120:
+            return
+        exp = export_price_fn(self.s, now.date())(price)
+        grid = p["grid_w"] * dt / 3.6e6
+        nb = (p["grid_w"] - (p.get("battery_w") or 0.0)) * dt / 3.6e6
+        cost = lambda kwh: kwh * (price if kwh > 0 else exp)  # noqa: E731
+        d = self.days.setdefault(now.date().isoformat(), {"day": now.date().isoformat(), "cost": 0.0,
+                                                          "cost_no_battery": 0.0, "import_kwh": 0.0,
+                                                          "export_kwh": 0.0})
+        d["cost"] = round(d["cost"] + cost(grid), 5)
+        d["cost_no_battery"] = round(d["cost_no_battery"] + cost(nb), 5)
+        d["import_kwh"] = round(d.get("import_kwh", 0.0) + max(grid, 0.0), 4)
+        d["export_kwh"] = round(d.get("export_kwh", 0.0) + max(-grid, 0.0), 4)
+        d["minutes"] = round(d.get("minutes", 0.0) + dt / 60, 2)
+
+    def realised(self, now: datetime) -> dict:
+        days = []
+        for k in range(6, -1, -1):
+            key = (now.date() - timedelta(days=k)).isoformat()
+            d = self.days.get(key)
+            days.append({"day": key, "saving": None if not d else round(d["cost_no_battery"] - d["cost"], 3),
+                         "cost": None if not d else round(d["cost"], 3),
+                         "minutes": None if not d else d.get("minutes", 24 * 60)})
+        known = [d["saving"] for d in days if d["saving"] is not None]
+        return {"today": days[-1], "days": days,
+                "avg_saving": round(sum(known) / len(known), 3) if known else None}
+
     # --- planning ------------------------------------------------------------------------
     def update(self, snap: dict, now: datetime | None = None) -> dict:
         """Re-plan when needed and return the advice block for the dashboard snapshot."""
         now = (now or datetime.now(TZ)).astimezone(TZ)
+        self.meter(snap, now)
         soc = snap.get("soc")
         price_state = self.source.get_state(self.s.price_entity) if self.s.price_entity else None
         prices = parse_prices((price_state or {}).get("attributes", {}).get(self.s.price_attribute)) \
@@ -186,6 +235,10 @@ class Advisor:
             "plan": [{"t": st.start.isoformat(), "action": st.action.value, "soc": round(st.soc_end, 1),
                       "price": round(st.price, 4)} for st in steps],
             "log": list(reversed(self.log[-30:])),
+            "realised": self.realised(now),
+            "full_at": next((st.start.isoformat() for st in steps if st.soc_end >= 99.5), None),
+            "empty_at": next((st.start.isoformat() for st in steps
+                              if st.soc_end <= self.battery.reserve_soc + 0.5), None),
         }
 
     def _record(self, now: datetime, step: core.PlanStep, ctl: core.Control, match, snap: dict):

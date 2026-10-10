@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+- Gemeten besparing: BattBrain meet per dag wat je netafname kostte en wat het zonder batterij had gekost; grafiek van de afgelopen 7 dagen.
+- Plangrafiek in drie banen: laadtoestand, wat de batterij doet, en prijs per kwartier gekleurd naar prijsniveau (laag/midden/hoog) met daggemiddelde.
+- Prijskaart met minigrafiek van vandaag en het daggemiddelde.
+- Batterijkaart toont wanneer de batterij volgens plan vol of op reserve is.
+- Demo rekent een hele dag door met de planner, zodat alle getallen bij elkaar passen.
+- "Vasthouden" alleen bij een betekenisvolle lading boven de reserve.
+
 ## 0.2.0
 - Adviesmodus: plan per kwartier met de BattBrain-planner, met reden per beslissing.
 - Vergelijking met je huidige sturing (reserveschakelaar en doel-SoC) en % overeenkomst per dag.

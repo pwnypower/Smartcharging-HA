@@ -41,10 +41,10 @@
           <div class="side-sub" id="hero-agree"></div>
         </div>
         <div class="side-block">
-          <div class="side-label">Verwacht voordeel van dit plan</div>
-          <div class="savings"><span class="big" id="sav-none">–</span><span class="sub">t.o.v. geen batterij</span></div>
-          <div class="savings"><span class="mid" id="sav-self">–</span><span class="sub">extra t.o.v. alleen zelfverbruik</span></div>
-          <div class="side-sub" id="sav-horizon"></div>
+          <div class="side-label">Besparing door je batterij</div>
+          <div class="savings"><span class="big" id="sav-today">–</span><span class="sub" id="sav-today-sub">vandaag tot nu, gemeten</span></div>
+          <div class="savings"><span class="mid" id="sav-plan">–</span><span class="sub" id="sav-plan-sub">verwacht met dit plan</span></div>
+          <div class="side-sub" id="sav-self"></div>
         </div>
       </div>
     </section>
@@ -60,16 +60,17 @@
       <!-- KPIs -->
       <div class="kpis">
         <article class="card kpi">
-          <div class="card-label">Laadtoestand</div>
+          <div class="card-label">Batterij</div>
           <div class="kpi-row">
-            <div class="ring" id="soc-ring" style="--p:0"><span id="soc">–</span><small>%</small></div>
-            <div><div class="kpi-sub" id="soc-kwh">–</div><div class="kpi-sub" id="soc-reserve">–</div></div>
+            <div class="ring" id="soc-ring" style="--p:0"><div><span id="soc">–</span><small>%</small></div></div>
+            <div><div class="kpi-sub strong" id="soc-kwh">–</div><div class="kpi-sub" id="soc-eta">–</div><div class="kpi-sub" id="soc-reserve">–</div></div>
           </div>
         </article>
         <article class="card kpi">
-          <div class="card-label">Prijs nu (all-in)</div>
-          <div class="kpi-value"><span id="price">–</span><small>€/kWh</small></div>
-          <div class="kpi-sub"><span class="badge" id="price-level">–</span> <span id="price-range"></span></div>
+          <div class="card-head tight"><div class="card-label">Stroomprijs nu</div><span class="badge" id="price-level">–</span></div>
+          <div class="kpi-value"><span id="price">–</span><small>€/kWh all-in</small></div>
+          <div class="spark" id="spark"></div>
+          <div class="kpi-sub" id="price-range">–</div>
         </article>
         <article class="card kpi">
           <div class="card-label">Zon</div>
@@ -92,19 +93,25 @@
 
     <section class="grid-2">
       <article class="card">
+        <div class="card-head"><div class="card-label">Besparing per dag</div><span class="chip ghost" id="days-avg"></span></div>
+        <div class="days" id="days"></div>
+        <p class="hint">Gemeten: wat je netafname kostte, vergeleken met dezelfde dag zonder batterij.</p>
+      </article>
+      <article class="card">
         <div class="card-label">Beslissingen</div>
         <ol class="timeline" id="timeline"><li class="empty">Nog geen beslissingen.</li></ol>
       </article>
-      <article class="card">
-        <div class="card-label">Sturing en tarief</div>
-        <dl class="rows">
-          <div><dt>BattBrain zou zetten</dt><dd id="ctl-advice">–</dd></div>
-          <div><dt>Je automatisering staat op</dt><dd id="ctl-current">–</dd></div>
-          <div><dt>Teruglevering</dt><dd id="ctl-export">–</dd></div>
-          <div><dt>Batterij</dt><dd id="sys">–</dd></div>
-        </dl>
-        <p class="hint">Adviesmodus: BattBrain verandert niets aan je batterij. Je huidige automatisering blijft sturen.</p>
-      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-label">Sturing en tarief</div>
+      <dl class="rows cols">
+        <div><dt>BattBrain zou zetten</dt><dd id="ctl-advice">–</dd></div>
+        <div><dt>Je automatisering staat op</dt><dd id="ctl-current">–</dd></div>
+        <div><dt>Teruglevering</dt><dd id="ctl-export">–</dd></div>
+        <div><dt>Batterij</dt><dd id="sys">–</dd></div>
+      </dl>
+      <p class="hint">Adviesmodus: BattBrain verandert niets aan je batterij. Je huidige automatisering blijft sturen.</p>
     </section>
   </main>
   <script src="app.js"></script>
