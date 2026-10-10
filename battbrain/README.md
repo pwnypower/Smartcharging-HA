@@ -3,13 +3,23 @@
 Slimme sturing van een thuisbatterij op basis van dynamische prijzen, zonvoorspelling en je eigen
 verbruikspatroon, klaar voor het einde van de salderingsregeling (2027).
 
-> Status: in opbouw. Stap 1 (ontwerp) en stap 2 (kern) zijn klaar. Er is nog niets dat je batterij aanstuurt.
+> Status: beta 0.1. Stap 1 (ontwerp), 2 (kern) en 3 (app, alleen lezen) zijn klaar. BattBrain stuurt je batterij nog niet aan.
 
 | Map | Inhoud |
 |---|---|
 | [`DESIGN.md`](DESIGN.md) | Ontwerpbesluiten: wat we uit het BattBrain-design overnemen en wat verandert |
 | [`design/`](design/) | Het originele BattBrain-designpakket (HTML/React-prototype, logo, brandbook) |
-| [`core/`](core/) | `battbrain_core`: planner, voorspellingen en besparingsberekening (alleen Python-standaardbibliotheek) |
+| [`app/`](app/) | De Home Assistant-app: `battbrain_core` (planner, voorspellingen), `battbrain_app` (HA-koppeling, alleen lezen, webserver) en `web/` (dashboard) |
+
+## Installeren in Home Assistant (beta)
+
+1. **Instellingen → Apps** (voorheen Add-ons) → **Store** → ⋮ → **Repositories**, voeg toe:
+   `https://github.com/pwnypower/Smartcharging-HA`
+2. Installeer **BattBrain**, vul in het tabblad *Configuratie* je entity_id's in (zie [`app/DOCS.md`](app/DOCS.md)),
+   of zet `demo: true` om eerst met voorbeeldgegevens te kijken.
+3. Start de app en open **BattBrain** in de zijbalk.
+
+Zonder Home Assistant bekijken: `cd battbrain/app && python3 -m battbrain_app --demo --port 8099`, open daarna http://localhost:8099.
 
 ## Hoe de planner werkt
 
@@ -45,5 +55,5 @@ print(control_for(plan.steps[0], soc=42, bat=bat))
 ## Tests
 
 ```bash
-cd battbrain/core && python3 -m unittest discover -s tests
+cd battbrain/app && python3 -m unittest discover -s tests
 ```

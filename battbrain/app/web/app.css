@@ -1,0 +1,149 @@
+/* BattBrain — tokens from the design package (design/src/enhanced-styles.css), dark theme first.
+   Fonts: Clash Display / Satoshi are not bundled yet; the stack falls back to the system font. */
+:root {
+  --font-display: "Clash Display", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Satoshi", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --accent: #2fd07a;
+  --accent-2: #14b88a;
+  --c-charge: #4f8cff;
+  --c-discharge: #ff9a3d;
+  --c-pv: #ffd84d;
+  --price-low: #2fd07a;
+  --price-mid: #f5b13d;
+  --price-high: #f5594f;
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 22px;
+  --glass-blur: 28px;
+}
+:root[data-theme="dark"] {
+  --bg: #050d09;
+  --bg-grad-1: #0a1a14;
+  --surface: rgba(12, 26, 20, 0.52);
+  --surface-2: rgba(16, 34, 26, 0.40);
+  --border: rgba(170, 240, 205, 0.07);
+  --border-strong: rgba(170, 240, 205, 0.14);
+  --text: #ecf6f0;
+  --text-dim: #9fb6ab;
+  --text-faint: #6a847a;
+  --shadow: 0 24px 64px -20px rgba(0, 0, 0, 0.55), 0 8px 20px -8px rgba(0, 0, 0, 0.3);
+  --card-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+/* light theme: tokens ready, switched on in a later version */
+:root[data-theme="light"] {
+  --bg: #ecf3ee;
+  --bg-grad-1: #f5faf6;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.55);
+  --border: rgba(10, 55, 35, 0.09);
+  --border-strong: rgba(10, 55, 35, 0.18);
+  --text: #0a1e14;
+  --text-dim: #3a5f4e;
+  --text-faint: #6b8f7e;
+  --shadow: 0 20px 48px -20px rgba(10, 40, 28, 0.20);
+  --card-inset: inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--font-body);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.bg {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 15% 0%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 70%),
+    radial-gradient(50% 40% at 100% 20%, color-mix(in oklab, var(--c-charge) 10%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--bg-grad-1), var(--bg));
+}
+
+.top {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px;
+  background: color-mix(in oklab, var(--bg) 70%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font: 600 20px var(--font-display); letter-spacing: -0.01em; }
+.brand b { color: var(--accent); font-weight: 600; }
+.status { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.meta { color: var(--text-faint); font-size: 13px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.pill.offline { color: var(--price-high); background: color-mix(in oklab, var(--price-high) 12%, transparent); border-color: color-mix(in oklab, var(--price-high) 30%, transparent); }
+.pill.demo { color: var(--price-mid); background: color-mix(in oklab, var(--price-mid) 12%, transparent); border-color: color-mix(in oklab, var(--price-mid) 30%, transparent); }
+
+.dash { max-width: 1180px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.grid-3 { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.grid-2 { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+
+.card {
+  position: relative; min-width: 0;
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow), var(--card-inset);
+}
+.card-label { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+h2 { font: 600 20px var(--font-display); margin: 0; }
+.stat-value { font: 600 40px/1.1 var(--font-display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat-unit { font-size: 15px; font-weight: 500; color: var(--text-dim); margin-left: 6px; letter-spacing: 0; }
+.stat-label { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
+.hint { color: var(--text-faint); font-size: 13px; margin: 12px 0 0; text-wrap: pretty; }
+
+.badge { display: inline-block; margin: 10px 0 2px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border-strong); color: var(--text-dim); }
+.badge.low { color: var(--price-low); border-color: color-mix(in oklab, var(--price-low) 40%, transparent); }
+.badge.mid { color: var(--price-mid); border-color: color-mix(in oklab, var(--price-mid) 40%, transparent); }
+.badge.high { color: var(--price-high); border-color: color-mix(in oklab, var(--price-high) 40%, transparent); }
+
+.soc-row { display: flex; align-items: center; gap: 20px; }
+.battery { width: 64px; flex: none; }
+.battery-cap { width: 24px; height: 8px; margin: 0 auto -1px; border-radius: 4px 4px 0 0; background: var(--border-strong); }
+.battery-body { position: relative; height: 104px; border-radius: 14px; border: 2px solid var(--border-strong); overflow: hidden; background: var(--surface-2); }
+.battery-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0%; background: linear-gradient(180deg, var(--accent), var(--accent-2)); transition: height 0.8s ease; }
+
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.node { text-align: center; padding: 14px 8px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); }
+.node-name { font-size: 13px; color: var(--text-dim); }
+.node-val { font: 600 22px var(--font-display); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.node-dir { font-size: 12px; color: var(--text-faint); min-height: 18px; }
+.node.pv .node-val { color: var(--c-pv); }
+.node.bat.charging .node-val { color: var(--c-charge); }
+.node.bat.discharging .node-val { color: var(--c-discharge); }
+@media (max-width: 560px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stat-value { font-size: 34px; } }
+
+.legend { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.legend .k { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-left: 6px; }
+.k.low { background: var(--price-low); } .k.mid { background: var(--price-mid); } .k.high { background: var(--price-high); }
+.curve { margin-top: 12px; }
+.curve svg { display: block; width: 100%; height: auto; overflow: visible; }
+.curve .bar.low { fill: var(--price-low); } .curve .bar.mid { fill: var(--price-mid); } .curve .bar.high { fill: var(--price-high); }
+.curve .bar { fill-opacity: 0.55; }
+.curve .bar.now { fill-opacity: 1; }
+.curve .tick { fill: var(--text-faint); font-size: 11px; }
+.curve .grid { stroke: var(--border-strong); }
+.curve .nowline { stroke: var(--text); stroke-dasharray: 3 3; }
+
+.rows { margin: 0; display: grid; gap: 8px; }
+.rows div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.rows div:last-child { border-bottom: 0; }
+.rows dt { color: var(--text-dim); }
+.rows dd { margin: 0; font-weight: 600; text-align: right; }
+
+.notice { border-radius: var(--radius); padding: 12px 16px; font-size: 14px; border: 1px solid color-mix(in oklab, var(--price-mid) 35%, transparent); background: color-mix(in oklab, var(--price-mid) 10%, transparent); }
+.notice + .notice { margin-top: 8px; }
+.notice code { font-size: 13px; }

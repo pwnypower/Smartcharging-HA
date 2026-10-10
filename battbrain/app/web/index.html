@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="nl" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BattBrain</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+  <header class="top">
+    <div class="brand"><img src="icon.svg" alt="" width="32" height="32"><span>Batt<b>Brain</b></span></div>
+    <div class="status">
+      <span class="pill" id="mode-pill"><span class="dot"></span><span id="mode-text">Adviesmodus · alleen lezen</span></span>
+      <span class="meta" id="updated">Laden…</span>
+    </div>
+  </header>
+
+  <main class="dash">
+    <div id="notices"></div>
+
+    <section class="grid-3">
+      <article class="card" id="card-soc">
+        <div class="card-label">Laadtoestand</div>
+        <div class="soc-row">
+          <div class="battery" aria-hidden="true"><div class="battery-cap"></div><div class="battery-body"><div class="battery-fill" id="soc-fill"></div></div></div>
+          <div>
+            <div class="stat-value"><span id="soc">–</span><span class="stat-unit">%</span></div>
+            <div class="stat-label" id="soc-kwh">–</div>
+            <div class="stat-label" id="soc-reserve">–</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" id="card-price">
+        <div class="card-label">Huidige prijs (all-in)</div>
+        <div class="stat-value"><span id="price">–</span><span class="stat-unit">€/kWh</span></div>
+        <div class="badge" id="price-level">–</div>
+        <div class="stat-label" id="price-range">–</div>
+      </article>
+
+      <article class="card" id="card-solar">
+        <div class="card-label">Zon</div>
+        <div class="stat-value"><span id="solar-today">–</span><span class="stat-unit">kWh vandaag</span></div>
+        <div class="stat-label" id="solar-remaining">–</div>
+        <div class="stat-label" id="solar-tomorrow">–</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-label">Energiestroom nu</div>
+      <div class="flow" id="flow">
+        <div class="node pv"><div class="node-name">Zon</div><div class="node-val" id="flow-solar">–</div></div>
+        <div class="node grid"><div class="node-name">Net</div><div class="node-val" id="flow-grid">–</div><div class="node-dir" id="flow-grid-dir"></div></div>
+        <div class="node bat"><div class="node-name">Batterij</div><div class="node-val" id="flow-bat">–</div><div class="node-dir" id="flow-bat-dir"></div></div>
+        <div class="node house"><div class="node-name">Huis</div><div class="node-val" id="flow-house">–</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-label">Prijsverloop</div>
+          <h2 id="curve-title">Vandaag</h2>
+        </div>
+        <div class="legend"><span class="k low"></span>laag <span class="k mid"></span>midden <span class="k high"></span>hoog</div>
+      </div>
+      <div class="curve" id="curve"></div>
+      <div class="stat-label" id="curve-note"></div>
+    </section>
+
+    <section class="grid-2">
+      <article class="card">
+        <div class="card-label">Sturing</div>
+        <dl class="rows">
+          <div><dt>Modus</dt><dd id="ctl-mode">–</dd></div>
+          <div><dt>Reserveschakelaar</dt><dd id="ctl-reserve">–</dd></div>
+          <div><dt>Doel-SoC</dt><dd id="ctl-target">–</dd></div>
+        </dl>
+        <p class="hint">BattBrain leest alleen. Je huidige automatisering blijft de batterij aansturen.</p>
+      </article>
+      <article class="card">
+        <div class="card-label">Systeem</div>
+        <dl class="rows">
+          <div><dt>Capaciteit</dt><dd id="sys-cap">–</dd></div>
+          <div><dt>Max. vermogen</dt><dd id="sys-pow">–</dd></div>
+          <div><dt>Minimale reserve</dt><dd id="sys-res">–</dd></div>
+        </dl>
+      </article>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
