@@ -23,3 +23,17 @@ jobs:
       - name: Simulator
         working-directory: simulator
         run: python -m unittest discover -s tests -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the standalone image (same Dockerfile as the add-on)
+        run: docker build -t battbrain:ci battbrain/app
+      - name: Start in demo mode and fetch the dashboard
+        run: |
+          docker run -d --name bb -p 8099:8099 -e BATTBRAIN_DEMO=1 battbrain:ci
+          for i in $(seq 1 30); do curl -sf localhost:8099/api/snapshot >/dev/null && break; sleep 1; done
+          curl -sf localhost:8099/ | grep -q BattBrain
+          curl -sf localhost:8099/api/snapshot | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['soc'] is not None"
+          docker logs bb

@@ -2,6 +2,11 @@
 (function () {
   "use strict";
   const NS = "http://www.w3.org/2000/svg";
+  // follow the system theme (HA's own theme is not visible inside the ingress frame)
+  const light = window.matchMedia("(prefers-color-scheme: light)");
+  const applyTheme = () => { document.documentElement.dataset.theme = light.matches ? "light" : "dark"; };
+  applyTheme();
+  light.addEventListener("change", applyTheme);
   const $ = (id) => document.getElementById(id);
   const nf = (d) => new Intl.NumberFormat("nl-NL", { minimumFractionDigits: d, maximumFractionDigits: d });
   const fmt = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v) ? "–" : nf(d).format(v));
@@ -275,6 +280,118 @@
     });
   }
 
+  /* ---------------- look back on your own data ---------------- */
+  let rules = "now";
+  const SCEN = [
+    { k: "no_battery", label: "Zonder batterij", cls: "s-none" },
+    { k: "self_use", label: "Alleen zelfverbruik", cls: "s-self" },
+    { k: "measured", label: "Jouw installatie (gemeten)", cls: "s-measured" },
+    { k: "battbrain", label: "Met BattBrain", cls: "s-bb" },
+  ];
+  function lookback(s) {
+    const b = s.backtest;
+    const bars = $("lb-bars");
+    if (!b || b.error || !b.totals) {
+      $("lb-big").textContent = "–";
+      $("lb-big").className = "lb-big";
+      $("lb-sub").textContent = b && b.error ? b.error : "De terugblik wordt berekend uit je Home Assistant-geschiedenis…";
+      $("lb-year").textContent = "";
+      bars.textContent = "";
+      return;
+    }
+    const t = rules === "2027" ? b.totals_2027 : b.totals;
+    const n = b.days.length;
+    const extra = t.extra_vs_measured != null ? t.extra_vs_measured : t.extra_vs_self_use;
+    const vs = t.extra_vs_measured != null ? "dan je installatie nu deed" : "dan alleen zelfverbruik";
+    $("lb-title").textContent = `Wat had BattBrain de afgelopen ${n} ${n === 1 ? "dag" : "dagen"} opgeleverd?`;
+    $("lb-big").textContent = signedEur(extra);
+    $("lb-big").className = "lb-big" + (extra < 0 ? " neg" : "");
+    $("lb-sub").textContent = (extra >= 0 ? "goedkoper " : "duurder ") + vs + (rules === "2027" ? ", met de regels van 2027" : "") +
+      ` (${new Date(b.from + "T12:00").toLocaleDateString("nl-NL", { day: "numeric", month: "short" })} t/m ${new Date(b.to + "T12:00").toLocaleDateString("nl-NL", { day: "numeric", month: "short" })}).`;
+    $("lb-year").textContent = `Je batterij met BattBrain bespaart in deze periode ${eur(t.saving_battbrain)} t.o.v. geen batterij; ruw doorgerekend ${eur(t.per_year_battbrain, 0)} per jaar.`;
+    bars.textContent = "";
+    const shown = SCEN.filter((c) => c.k !== "measured" || t.measured_ok);
+    const max = Math.max(...shown.map((c) => Math.abs(t[c.k])), 0.01);
+    shown.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "lb-row " + c.cls;
+      const name = document.createElement("span"); name.className = "lb-name"; name.textContent = c.label;
+      const track = document.createElement("span"); track.className = "lb-track";
+      const fill = document.createElement("i"); fill.style.width = Math.max(2, Math.abs(t[c.k]) / max * 100) + "%";
+      track.appendChild(fill);
+      const val = document.createElement("span"); val.className = "lb-val"; val.textContent = eur(t[c.k]);
+      row.append(name, track, val);
+      bars.appendChild(row);
+    });
+    const ul = $("lb-assumptions");
+    if (!ul.childElementCount) (b.assumptions || []).forEach((a) => { const li = document.createElement("li"); li.textContent = a; ul.appendChild(li); });
+  }
+  let lastSnap = null;
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-rules]");
+    if (!btn) return;
+    rules = btn.dataset.rules;
+    document.querySelectorAll("[data-rules]").forEach((x) => { x.classList.toggle("on", x === btn); x.setAttribute("aria-pressed", x === btn); });
+    if (lastSnap) lookback(lastSnap);
+  });
+
+  /* ---------------- installation check ---------------- */
+  const VERDICT = {
+    control_ready: ["Klaar voor sturing", "ok"],
+    advice_ready: ["Klaar voor advies", "ok"],
+    incomplete: ["Nog niet compleet", "bad"],
+  };
+  const STATUS = { ok: "ok", unset: "Niet ingesteld", missing: "Bestaat niet", unavailable: "Geen waarde", wrong: "Klopt niet" };
+  let setupYaml = "";
+  async function setupCheck() {
+    let r;
+    try { r = await (await fetch("api/setup", { cache: "no-store" })).json(); } catch (e) { return; }
+    if (!r || !r.roles) return;
+    const [text, tone] = VERDICT[r.verdict] || ["–", ""];
+    $("setup-chip").textContent = text;
+    $("setup-chip").className = "chip " + (tone === "bad" ? "warn" : "good");
+    setupYaml = r.options_yaml || "";
+    const ul = $("setup-list");
+    ul.textContent = "";
+    r.roles.forEach((row) => {
+      const li = document.createElement("li");
+      li.className = "st-" + row.status + " grp-" + row.group;
+      const dot = document.createElement("span"); dot.className = "st-dot";
+      const main = document.createElement("div");
+      const lab = document.createElement("div"); lab.className = "st-label"; lab.textContent = row.label;
+      if (row.group === "control") { const g = document.createElement("small"); g.textContent = " · voor sturing"; lab.appendChild(g); }
+      const ent = document.createElement("code"); ent.textContent = row.entity_id || "—";
+      main.append(lab, ent);
+      if (row.auto) { const a = document.createElement("span"); a.className = "chip tiny"; a.textContent = "automatisch gevonden"; main.appendChild(a); }
+      const note = document.createElement("div"); note.className = "st-note";
+      note.textContent = row.status === "ok" ? row.note : `${STATUS[row.status] || row.status}${row.note && row.status !== "unset" ? ": " + row.note : ""}`;
+      if (row.status !== "ok" && row.suggestions.length) {
+        const sug = document.createElement("div"); sug.className = "st-sug";
+        sug.textContent = "Voorstel: ";
+        const c = document.createElement("code"); c.textContent = row.suggestions[0].entity_id;
+        sug.append(c, document.createTextNode(` (${row.suggestions[0].name})`));
+        note.appendChild(sug);
+      }
+      li.append(dot, main, note);
+      ul.appendChild(li);
+    });
+    const box = $("setup");
+    if (r.verdict === "incomplete" && !box.dataset.moved) {
+      $("notices").after(box);
+      box.open = true;
+      box.dataset.moved = "1";
+    }
+  }
+  document.addEventListener("click", async (ev) => {
+    if (ev.target.id !== "btn-copy") return;
+    try {
+      await navigator.clipboard.writeText(setupYaml);
+      $("copy-msg").textContent = "Gekopieerd. Plak het in het tabblad Configuratie van de app (YAML-modus).";
+    } catch (e) {
+      $("copy-msg").textContent = setupYaml;
+    }
+  });
+
   /* ---------------- plan chart ---------------- */
   function legend() {
     const box = $("legend");
@@ -466,7 +583,8 @@
     const steering = (s.steering || {}).mode === "control";
     $("mode-text").textContent = s.demo ? (steering ? "Demo · stuurt" : "Demo · adviesmodus") : s.connected ? "Adviesmodus" : "Geen verbinding";
     $("updated").textContent = "Bijgewerkt " + new Date(s.updated).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    hero(s); flow(s); kpis(s); plan(s); days(s); timeline(s); control(s);
+    lastSnap = s;
+    hero(s); flow(s); kpis(s); plan(s); lookback(s); days(s); timeline(s); control(s);
   }
 
   async function tick() {
@@ -480,6 +598,8 @@
   }
   tick();
   setInterval(tick, 15000);
+  setupCheck();
+  setInterval(setupCheck, 300000);
   let to;
   window.addEventListener("resize", () => { clearTimeout(to); to = setTimeout(() => planData && plan(planData), 150); });
 })();

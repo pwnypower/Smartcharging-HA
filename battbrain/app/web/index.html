@@ -91,6 +91,26 @@
       <div class="kpi-sub" id="plan-note"></div>
     </section>
 
+    <!-- look back on your own data -->
+    <section class="card lookback" id="lookback">
+      <div class="card-head">
+        <div><div class="card-label">Terugblik op jouw data</div><h2 id="lb-title">Wat had BattBrain opgeleverd?</h2></div>
+        <div class="seg" role="group" aria-label="Regels voor teruglevering">
+          <button type="button" class="on" data-rules="now" aria-pressed="true">Nu, met salderen</button>
+          <button type="button" data-rules="2027" aria-pressed="false">Vanaf 2027</button>
+        </div>
+      </div>
+      <div class="lb-body">
+        <div class="lb-head">
+          <div class="lb-big" id="lb-big">–</div>
+          <div class="lb-sub" id="lb-sub">De terugblik wordt berekend uit je Home Assistant-geschiedenis…</div>
+          <div class="lb-year" id="lb-year"></div>
+        </div>
+        <div class="lb-bars" id="lb-bars"></div>
+      </div>
+      <details class="lb-notes"><summary>Hoe we dit berekenen</summary><ul id="lb-assumptions"></ul></details>
+    </section>
+
     <section class="grid-2">
       <article class="card">
         <div class="card-head"><div class="card-label">Besparing per dag</div><span class="chip ghost" id="days-avg"></span></div>
@@ -120,7 +140,22 @@
       </dl>
       <p class="hint" id="steer-hint">BattBrain verandert alleen de reserveschakelaar en het doel-SoC. Bij twijfel (geen verbinding, oud plan) zet het de batterij terug op gewoon zelfverbruik.</p>
     </section>
+    <!-- installation check -->
+    <details class="card setup" id="setup">
+      <summary class="card-head">
+        <div><div class="card-label">Installatie</div><h2 id="setup-title">Installatiecheck</h2></div>
+        <span class="chip ghost" id="setup-chip">–</span>
+      </summary>
+      <p class="hint" id="setup-intro">BattBrain zoekt zelf de juiste sensoren. Wat het zeker weet vult het in; de schakelaar en het doel-SoC kies je altijd zelf.</p>
+      <ul class="setup-list" id="setup-list"></ul>
+      <div class="setup-foot">
+        <button class="btn" id="btn-copy" type="button">Kopieer instellingen</button>
+        <span class="hint" id="copy-msg"></span>
+      </div>
+    </details>
   </main>
+  <footer class="foot">BattBrain 1.0 · draait lokaal, geen cloud · open source (AGPL-3.0) ·
+    <a href="https://github.com/pwnypower/Smartcharging-HA/tree/main/battbrain" target="_blank" rel="noopener">broncode</a></footer>
   <script src="app.js"></script>
 </body>
 </html>

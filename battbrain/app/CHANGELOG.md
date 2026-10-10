@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0
+- **Installatiecheck**: BattBrain zoekt zelf je batterij-, prijs-, zon- en vermogenssensoren. Wat het zeker weet
+  vult het in (`auto_detect`); de reserveschakelaar en het doel-SoC kies je altijd zelf. De kaart *Installatie*
+  toont per sensor of hij werkt, met een voorstel en een knop om de instellingen te kopiëren.
+- **Terugblik op jouw data**: BattBrain speelt de afgelopen 7 dagen uit je Home Assistant-geschiedenis opnieuw af
+  en laat zien wat het had opgeleverd t.o.v. geen batterij, alleen zelfverbruik en wat je installatie echt deed,
+  nu en met de regels van 2027.
+- **Zonder add-on-store**: dezelfde app draait met Docker Compose naast HA Container of Core
+  (`standalone/`), met een optioneel wachtwoord.
+- Licht thema volgt je systeeminstelling.
+- Geschiedenis wordt in één doorloop per kwartier gemiddeld: veel sneller bij sensoren die vaak updaten.
+- Licentie: AGPL-3.0. Docker-build en demo-start worden in CI getest.
+
 ## 0.4.1
 - Zoncorrectie: BattBrain meet per dag de echte zonopbrengst en vergelijkt die met de ochtendvoorspelling;
   na 3 volle dagen rekent het plan met die correctie.

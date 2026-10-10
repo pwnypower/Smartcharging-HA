@@ -43,6 +43,8 @@ class Settings:
     max_charge_price: float = 0.40       # never grid-charge above this all-in price (EUR/kWh)
     min_switch_minutes: int = 10         # minimum time between toggles of the reserve switch
     conflict_automation: str = ""        # e.g. automation.smartcharging; control pauses while it is on
+    auto_detect: bool = True             # fill empty read-only entities with a confident match
+    backtest_days: int = 7
     # runtime
     poll_seconds: int = 15
     port: int = 8099

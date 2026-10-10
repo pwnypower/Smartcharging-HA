@@ -61,6 +61,10 @@ class HAClient:
                 return None
             raise
 
+    def get_states(self) -> list[dict]:
+        """Every entity's state (for the installation check)."""
+        return self._get("states") or []
+
     def get_config(self) -> dict:
         """Home Assistant's core config (latitude, longitude, time zone)."""
         return self._get("config")

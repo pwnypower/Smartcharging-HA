@@ -1,0 +1,23 @@
+# BattBrain without the Home Assistant add-on store (HA Container / Core).
+#   1. Copy options.example.json to ./data/options.json and fill in your entities
+#      (or leave them empty: BattBrain finds most sensors itself).
+#   2. In Home Assistant: profile -> Security -> Long-lived access tokens -> create one.
+#   3. Put the URL and token in a .env file next to this file:
+#        HA_URL=http://192.168.1.10:8123
+#        HA_TOKEN=eyJ...
+#        BATTBRAIN_PASSWORD=choose-something
+#   4. docker compose up -d  ->  http://<this machine>:8099
+services:
+  battbrain:
+    build: ../app
+    container_name: battbrain
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    environment:
+      HA_URL: ${HA_URL}
+      HA_TOKEN: ${HA_TOKEN}
+      BATTBRAIN_PASSWORD: ${BATTBRAIN_PASSWORD:-}
+      TZ: Europe/Amsterdam
+    volumes:
+      - ./data:/data

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from .prices import TZ
 
 
-def _series(rows: list[dict], scale: float) -> list[tuple[datetime, float]]:
+def parse_series(rows: list[dict], scale: float = 1.0) -> list[tuple[datetime, float]]:
     out = []
     for r in rows:
         try:
@@ -19,22 +19,37 @@ def _series(rows: list[dict], scale: float) -> list[tuple[datetime, float]]:
     return out
 
 
-def _avg(points: list[tuple[datetime, float]], start: datetime, end: datetime) -> float | None:
-    """Time-weighted mean of a step-hold signal over [start, end), None without data."""
-    cur, total, t0 = None, 0.0, start
-    for t, v in points:
-        if t <= start:
-            cur = v
-            continue
-        if t >= end:
-            break
+def bucket_avg(points: list[tuple[datetime, float]], start: datetime, end: datetime,
+               minutes: int = 15) -> dict[datetime, float | None]:
+    """Time-weighted mean of a step-hold signal per bucket of `minutes`, in one sweep.
+
+    A bucket is None when the signal has no value yet; buckets that are only partly
+    covered are averaged over the covered part.
+    """
+    step = timedelta(minutes=minutes)
+    out: dict[datetime, float | None] = {}
+    i, n, cur = 0, len(points), None
+    while i < n and points[i][0] <= start:
+        cur = points[i][1]
+        i += 1
+    b = start
+    while b + step <= end:
+        nxt = b + step
+        total = covered = 0.0
+        t0 = b
+        while i < n and points[i][0] < nxt:
+            t, v = points[i]
+            if cur is not None:
+                total += cur * (t - t0).total_seconds()
+                covered += (t - t0).total_seconds()
+            t0, cur = t, v
+            i += 1
         if cur is not None:
-            total += cur * (t - t0).total_seconds()
-        t0, cur = t, v
-    if cur is None:
-        return None
-    total += cur * (end - t0).total_seconds()
-    return total / (end - start).total_seconds()
+            total += cur * (nxt - t0).total_seconds()
+            covered += (nxt - t0).total_seconds()
+        out[b] = total / covered if covered > 0 else None
+        b = nxt
+    return out
 
 
 def load_history(raw: dict[str, list[dict]], start: datetime, end: datetime,
@@ -47,19 +62,18 @@ def load_history(raw: dict[str, list[dict]], start: datetime, end: datetime,
     """
     units = units or {}
     scale = lambda e: 1000.0 if (units.get(e, "W").lower() == "kw") else 1.0  # noqa: E731
-    series = {e: _series(raw.get(e, []), scale(e)) for e in (grid, solar, battery, load) if e}
+    series = {e: parse_series(raw.get(e, []), scale(e)) for e in (grid, solar, battery, load) if e}
+    t0 = start.replace(minute=start.minute - start.minute % 15, second=0, microsecond=0)
+    avg = {e: bucket_avg(pts, t0, end) for e, pts in series.items()}
     out = []
-    t = start.replace(minute=start.minute - start.minute % 15, second=0, microsecond=0)
-    while t + timedelta(minutes=15) <= end:
-        nxt = t + timedelta(minutes=15)
+    for t in avg[load] if load else (avg[grid] if grid else {}):
         if load:
-            w = _avg(series[load], t, nxt)
+            w = avg[load][t]
         else:
-            g = _avg(series.get(grid, []), t, nxt) if grid else None
-            s = _avg(series.get(solar, []), t, nxt) if solar else 0.0
-            b = _avg(series.get(battery, []), t, nxt) if battery else 0.0
+            g = avg[grid][t]
+            s = avg[solar][t] if solar else 0.0
+            b = avg[battery][t] if battery else 0.0
             w = None if g is None or s is None or b is None else g * grid_sign + s - b * battery_sign
         if w is not None:
             out.append((t, max(w, 0.0) / 1000 * 0.25))
-        t = nxt
     return out

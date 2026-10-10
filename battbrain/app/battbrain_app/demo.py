@@ -63,49 +63,74 @@ def simulate_day(day0: datetime, prices: list[float], start_soc: float = 25.0) -
     return core.make_plan(start_soc, slots, BATTERY, resolution_pct=2.0).steps
 
 
+def simulate_self_use(day0: datetime, prices: list[float], start_soc: float) -> list[core.PlanStep]:
+    """One day of the inverter on its own (the household before BattBrain)."""
+    steps, soc = [], start_soc
+    for i in range(96):
+        t = day0 + timedelta(minutes=15 * i)
+        p = prices[i // 4]
+        end, grid = core.inverter_step(BATTERY, soc, load_kw(t) / 4, solar_kw(t) / 4)
+        steps.append(core.PlanStep(t, core.Action.IDLE, soc, end, p, grid, grid * p))
+        soc = end
+    return steps
+
+
 class DemoSource:
     def __init__(self, now: datetime | None = None):
         self._fixed = now  # None = follow the clock
         self._cache: dict = {}
         self.overrides: dict[str, str] = {}   # demo inverter: what control mode switched
         self.commands: list[tuple] = []
+        self._anchor = self._now().date()  # the demo's "today": gets the 9 October prices
 
     def _now(self) -> datetime:
         return (self._fixed or datetime.now(TZ)).astimezone(TZ)
 
     def _prices_for(self, day) -> list[float]:
-        return TODAY if (day - self._now().date()).days % 2 == 0 else TOMORROW
+        return TODAY if (day - self._anchor).days % 2 == 0 else TOMORROW
 
     def _day(self, day0: datetime) -> list[core.PlanStep]:
+        """Days before the demo's first day ran on plain self-use, from then on BattBrain plans."""
         key = day0.date()
         if key not in self._cache:
-            self._cache[key] = simulate_day(day0, self._prices_for(key))
+            if key >= self._anchor:
+                self._cache[key] = simulate_day(day0, self._prices_for(key))
+            else:
+                prev = (day0 - timedelta(hours=12)).replace(hour=0)
+                soc = self._day(prev)[-1].soc_end if (self._anchor - key).days < 30 else 25.0
+                self._cache[key] = simulate_self_use(day0, self._prices_for(key), soc)
         return self._cache[key]
+
+    def _flows(self, t: datetime) -> dict:
+        """SoC, power flows and plan step of the demo household at time t."""
+        day0 = t.replace(hour=0, minute=0, second=0, microsecond=0)
+        st = self._day(day0)[min(95, (t.hour * 60 + t.minute) // 15)]
+        stored = (st.soc_end - st.soc_start) / 100 * CAPACITY * 4000  # W into (+) / out of (-) storage
+        battery_w = stored / BATTERY.eta_charge if stored > 0 else stored * BATTERY.eta_discharge
+        solar_w, house_w = solar_kw(t) * 1000, load_kw(t) * 1000
+        return {"step": st, "soc": st.soc_start + (st.soc_end - st.soc_start) * (t.minute % 15) / 15,
+                "battery_w": battery_w, "solar_w": solar_w, "house_w": house_w,
+                "grid_w": house_w - solar_w + battery_w, "price": self._prices_for(day0.date())[t.hour]}
 
     def _states(self, at: datetime | None = None) -> dict[str, dict]:
         now = (at or self._now()).astimezone(TZ)
         day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        steps = self._day(day0)
         i = min(95, (now.hour * 60 + now.minute) // 15)
-        st = steps[i]
-        soc = st.soc_start + (st.soc_end - st.soc_start) * (now.minute % 15) / 15
-        stored = (st.soc_end - st.soc_start) / 100 * CAPACITY * 4000  # W into (+) / out of (-) storage
-        battery_w = stored / BATTERY.eta_charge if stored > 0 else stored * BATTERY.eta_discharge
-        solar_w = solar_kw(now) * 1000
-        house_w = load_kw(now) * 1000
-        grid_w = house_w - solar_w + battery_w
+        f = self._flows(now)
+        st, soc, battery_w, solar_w, grid_w = f["step"], f["soc"], f["battery_w"], f["solar_w"], f["grid_w"]
         ctl = core.control_for(st, st.soc_start, BATTERY)
-        prices = [{"from": t.isoformat(), "price": p} for t, p in _day_prices(day0, TODAY).items()]
+        day1 = day0 + timedelta(days=1)
+        prices = [{"from": t.isoformat(), "price": p} for t, p in _day_prices(day0, self._prices_for(day0.date())).items()]
         if now.hour >= 14:
             prices += [{"from": t.isoformat(), "price": p}
-                       for t, p in _day_prices(day0 + timedelta(days=1), TOMORROW).items()]
+                       for t, p in _day_prices(day1, self._prices_for(day1.date())).items()]
         q = lambda k: solar_kw(day0 + timedelta(minutes=15 * k)) / 4  # noqa: E731
         total = sum(q(k) for k in range(96))
         left = sum(q(k) for k in range(i, 96))
         n = lambda v, unit="": {"state": str(round(v, 1)), "attributes": {"unit_of_measurement": unit}}  # noqa: E731
         return {
             ENTITIES["soc"]: n(soc, "%"),
-            ENTITIES["price"]: {"state": str(TODAY[now.hour]), "attributes": {"prices": prices}},
+            ENTITIES["price"]: {"state": str(f["price"]), "attributes": {"prices": prices}},
             ENTITIES["solar_today"]: n(total, "kWh"),
             ENTITIES["solar_remaining"]: n(left, "kWh"),
             ENTITIES["solar_tomorrow"]: n(total * 0.35, "kWh"),
@@ -115,6 +140,31 @@ class DemoSource:
             ENTITIES["reserve_switch"]: {"state": "on" if ctl.reserve_on else "off", "attributes": {}},
             ENTITIES["target_soc"]: n(ctl.target_soc, "%"),
         }
+
+    def get_states(self) -> list[dict]:
+        """All entities, as Home Assistant's /api/states returns them (plus a few decoys)."""
+        names = {"soc": "Solis batterij SoC", "price": "Frank Energie huidige elektriciteitsprijs (all-in)",
+                 "solar_today": "Energy production today", "solar_remaining": "Energy production today remaining",
+                 "solar_tomorrow": "Energy production tomorrow", "grid_power": "P1 meter vermogen net",
+                 "solar_power": "Solis PV vermogen", "battery_power": "Solis batterij vermogen",
+                 "reserve_switch": "Solis backup/reserve modus", "target_soc": "Solis reserve SoC"}
+        out = []
+        for key, ent in ENTITIES.items():
+            st = dict(self.get_state(ent) or {})
+            attrs = dict(st.get("attributes") or {}, friendly_name=names[key])
+            if key in ("grid_power", "solar_power", "battery_power"):
+                attrs["device_class"] = "power"
+            if key == "soc":
+                attrs["device_class"] = "battery"
+            out.append(dict(st, entity_id=ent, attributes=attrs))
+        out += [
+            {"entity_id": "sensor.pixel_8_battery_level", "state": "64",
+             "attributes": {"unit_of_measurement": "%", "device_class": "battery", "friendly_name": "Pixel 8 batterij"}},
+            {"entity_id": "sensor.frank_energie_gasprijs", "state": "1.21",
+             "attributes": {"unit_of_measurement": "€/m³", "friendly_name": "Frank Energie gasprijs"}},
+            {"entity_id": "switch.koffiezetapparaat", "state": "off", "attributes": {"friendly_name": "Koffiezetapparaat"}},
+        ]
+        return out
 
     def get_state(self, entity_id: str) -> dict | None:
         st = self._states().get(entity_id)
@@ -135,15 +185,19 @@ class DemoSource:
         return {"latitude": 52.1, "longitude": 5.1}
 
     def get_history(self, entity_ids: list[str], start: datetime, end: datetime) -> dict[str, list[dict]]:
-        """Fifteen-minute history of the demo household (house load = grid + solar - battery)."""
+        """Fifteen-minute history of the demo household, as it ran under the planner."""
+        keys = {ENTITIES["grid_power"]: "grid_w", ENTITIES["solar_power"]: "solar_w",
+                ENTITIES["battery_power"]: "battery_w", ENTITIES["soc"]: "soc", ENTITIES["price"]: "price"}
         out: dict[str, list[dict]] = {e: [] for e in entity_ids if e}
-        t = start.replace(minute=start.minute - start.minute % 15, second=0, microsecond=0)
+        t = start.astimezone(TZ).replace(second=0, microsecond=0)
+        t = t.replace(minute=t.minute - t.minute % 15)
         while t < end:
-            row = {ENTITIES["grid_power"]: (load_kw(t) - solar_kw(t)) * 1000,
-                   ENTITIES["solar_power"]: solar_kw(t) * 1000, ENTITIES["battery_power"]: 0.0}
+            f = self._flows(t)
             for e in out:
-                if e in row:
-                    out[e].append({"state": str(round(row[e])), "last_changed": t.isoformat()})
+                if e in keys:
+                    v = f[keys[e]]
+                    out[e].append({"state": str(round(v, 4) if e == ENTITIES["price"] else round(v, 1)),
+                                   "last_changed": t.isoformat()})
             t += timedelta(minutes=15)
         return out
 

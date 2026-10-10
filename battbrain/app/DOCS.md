@@ -8,7 +8,15 @@ stuurt BattBrain de batterij zelf (zie *Sturing aanzetten*).
 
 ## Instellen
 
-Vul in het tabblad *Configuratie* de entity_id's in. Alles is optioneel; het dashboard toont wat ingesteld is.
+Meestal hoef je bijna niets in te vullen. Met `auto_detect: true` (standaard) zoekt BattBrain bij het starten
+zelf naar je laadtoestand, prijssensor, Forecast.Solar-sensoren en vermogenssensoren, en vult de lege opties in
+als het zeker is van de match. Open daarna de kaart **Installatie** onderaan het dashboard: per sensor zie je of
+hij werkt, wat BattBrain voorstelt en met **Kopieer instellingen** neem je alles over in het tabblad *Configuratie*
+(⋮ → *Bewerken in YAML*).
+
+De reserveschakelaar en het doel-SoC vult BattBrain nooit zelf in: wat BattBrain mag schakelen kies je zelf.
+
+Je kunt alles ook met de hand invullen:
 
 | Optie | Voorbeeld | Wat |
 |---|---|---|
@@ -21,8 +29,8 @@ Vul in het tabblad *Configuratie* de entity_id's in. Alles is optioneel; het das
 | `grid_power_entity` | `sensor.p1_meter_power` | Netvermogen (W of kW) |
 | `solar_power_entity` | `sensor.solis_pv_power` | Zonnevermogen |
 | `battery_power_entity` | `sensor.solis_battery_power` | Batterijvermogen |
-| `reserve_switch_entity` | `switch.solis_reserve` | Reserveschakelaar (alleen getoond) |
-| `target_soc_entity` | `number.solis_target_soc` | Doel-SoC (alleen getoond) |
+| `reserve_switch_entity` | `switch.solis_reserve` | Reserveschakelaar, voor sturing (BattBrain vult deze nooit zelf in) |
+| `target_soc_entity` | `number.solis_target_soc` | Doel-SoC, voor sturing (BattBrain vult deze nooit zelf in) |
 | `load_power_entity` | `sensor.house_power` | Optioneel: huisverbruik. Zonder deze sensor rekent BattBrain het uit (net + zon − batterij) |
 
 De voorbeelden zijn namen zoals ze vaak heten; kopieer de echte namen uit je eigen Home Assistant
@@ -36,9 +44,31 @@ De voorbeelden zijn namen zoals ze vaak heten; kopieer de echte namen uit je eig
 - `history_days`: hoeveel dagen verbruiksgeschiedenis BattBrain gebruikt om je verbruik per uur te leren.
 - `control_mode`: `advice` (standaard, stuurt niets) of `control` (BattBrain stuurt).
 - `max_charge_price`, `min_switch_minutes`, `conflict_automation`: zie *Sturing aanzetten*.
+- `auto_detect`: lege sensoropties automatisch invullen (niet de schakelaar en het doel-SoC).
+- `backtest_days`: hoeveel volle dagen de terugblik opnieuw afspeelt (standaard 7).
 - `demo: true` toont voorbeeldgegevens, handig om de app te bekijken zonder instellingen.
 
-## Sturing aanzetten (beta)
+## Terugblik op jouw data
+
+De kaart **Terugblik** speelt de afgelopen dagen uit je Home Assistant-geschiedenis opnieuw af: je verbruik,
+zonopbrengst en de prijzen per uur. Daarmee rekent BattBrain vier situaties door:
+
+- **Zonder batterij**: alles wat je huis tekort komt van het net, overschot terug.
+- **Alleen zelfverbruik**: de omvormer op zichzelf.
+- **Jouw installatie (gemeten)**: wat je netmeter echt deed, met je huidige automatisering.
+- **Met BattBrain**: elk uur een nieuw plan, met alleen wat op dat moment bekend was.
+
+Met de knop *Vanaf 2027* zie je dezelfde dagen met de regels na het einde van salderen. De terugblik heeft een
+prijssensor met geschiedenis en een net- of verbruikssensor nodig, en volle dagen met gegevens.
+
+## Zonder add-on-store (Docker)
+
+Gebruik je Home Assistant Container of Core, dan draai je BattBrain met Docker Compose; zie
+[`standalone/docker-compose.yml`](../standalone/docker-compose.yml). Je hebt een *long-lived access token* nodig
+(je profiel in Home Assistant → Beveiliging). Zet `BATTBRAIN_PASSWORD`, anders kan iedereen in je netwerk het
+dashboard openen.
+
+## Sturing aanzetten
 
 Doe dit pas als het advies een tijd overtuigend is geweest.
 
@@ -60,7 +90,7 @@ Wat BattBrain wel en niet doet:
 - Het controleert of de omvormer het commando volgt en meldt het als dat niet gebeurt.
 - Het doel-SoC blijft altijd tussen je minimale reserve en 100%.
 
-Gebruik op eigen risico: BattBrain is beta-software. Controleer de instellingen van je omvormer
+Gebruik op eigen risico: BattBrain is open-source software zonder garantie (zie de licentie). Controleer de instellingen van je omvormer
 (minimale ontlaaddiepte, laadstroom) zelf; BattBrain verandert die niet.
 
 ## Hoe het advies werkt
@@ -78,4 +108,10 @@ Prijzen boven 2 worden gelezen als ct/kWh en omgerekend naar €/kWh. Vermogen i
 
 ## Privacy
 
-BattBrain draait volledig lokaal. Er gaat geen data naar internet.
+BattBrain draait volledig lokaal. Er gaat geen data naar internet: geen account, geen telemetrie, geen cloud.
+Alles wat BattBrain bewaart (logboek, gemeten besparing per dag) staat in `/data` van de app.
+
+## Licentie
+
+AGPL-3.0. Je mag BattBrain gebruiken, aanpassen en delen. Bied je een aangepaste versie aan anderen aan,
+ook als dienst via internet, dan deel je de broncode van die versie.
