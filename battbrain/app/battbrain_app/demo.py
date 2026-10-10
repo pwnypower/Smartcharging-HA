@@ -28,8 +28,8 @@ class DemoSource:
     def __init__(self, now: datetime | None = None):
         self._fixed = now  # None = follow the clock
 
-    def _states(self) -> dict[str, dict]:
-        now = (self._fixed or datetime.now(TZ)).astimezone(TZ)
+    def _states(self, at: datetime | None = None) -> dict[str, dict]:
+        now = (at or self._fixed or datetime.now(TZ)).astimezone(TZ)
         day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
         hours = [{"from": (day0 + timedelta(hours=h)).isoformat(), "price": p} for h, p in enumerate(TODAY)]
         if now.hour >= 14:
@@ -60,6 +60,22 @@ class DemoSource:
 
     def get_state(self, entity_id: str) -> dict | None:
         return self._states().get(entity_id)
+
+    def get_config(self) -> dict:
+        return {"latitude": 52.1, "longitude": 5.1}
+
+    def get_history(self, entity_ids: list[str], start: datetime, end: datetime) -> dict[str, list[dict]]:
+        """Fifteen-minute history built from the same daily pattern (with a little day-to-day variation)."""
+        out: dict[str, list[dict]] = {e: [] for e in entity_ids if e}
+        t = start
+        while t < end:
+            st = self._states(t)
+            for e in out:
+                row = st.get(e)
+                if row:
+                    out[e].append({"state": row["state"], "last_changed": t.isoformat()})
+            t += timedelta(minutes=15)
+        return out
 
 
 def demo_settings(s):

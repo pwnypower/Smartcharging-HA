@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import tempfile
 
 from .config import Settings
 from .demo import DemoSource, demo_settings
@@ -21,6 +23,8 @@ def main(argv=None):
     s = Settings.load(a.options)
     if a.port:
         s.port = a.port
+    if not os.path.isdir(s.data_dir):  # outside the add-on (development): keep the log in /tmp
+        s.data_dir = os.path.join(tempfile.gettempdir(), "battbrain")
     if a.demo or s.demo:
         s = demo_settings(s)
         httpd = serve(s, DemoSource(), host="0.0.0.0")

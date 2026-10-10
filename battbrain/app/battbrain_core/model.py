@@ -77,9 +77,9 @@ class PlanStep:
 class Plan:
     created: datetime
     steps: list[PlanStep]
-    cost: float                 # expected grid cost over the horizon
+    cost: float                 # expected grid cost minus the value of energy added to the battery
     cost_without_battery: float
-    cost_self_use: float
+    cost_self_use: float        # same, for plain self-use
     meta: dict = field(default_factory=dict)
 
     @property

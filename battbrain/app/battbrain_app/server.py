@@ -10,6 +10,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .advisor import Advisor
 from .config import Settings
 from .snapshot import build_snapshot
 
@@ -24,6 +25,7 @@ class Poller:
 
     def __init__(self, settings: Settings, source, ping=lambda: True):
         self.settings, self.source, self.ping = settings, source, ping
+        self.advisor = Advisor(settings, source)
         self.snapshot: dict = {}
         self.lock = threading.Lock()
         self._stop = threading.Event()
@@ -32,6 +34,7 @@ class Poller:
         try:
             connected = self.ping()
             snap = build_snapshot(self.settings, self.source, connected=connected)
+            snap["advice"] = self.advisor.update(snap) if connected else {"error": "Geen verbinding"}
         except Exception as e:  # keep serving the last good snapshot
             log.warning("Snapshot mislukt: %s", e)
             snap = dict(self.snapshot, connected=False, error=str(e))

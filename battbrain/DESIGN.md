@@ -50,10 +50,24 @@ en wat later komt. De prototypebestanden zijn **referentie, geen productiecode**
 `--c-charge #4f8cff`, `--c-discharge #ff9a3d`, `--c-pv #ffd84d`, `--price-low #2fd07a`,
 `--price-mid #f5b13d`, `--price-high #f5594f`, `--radius-lg 22px`, `--glass-blur 28px`.
 
+## Inspiratie uit andere apps (v0.2)
+
+| Idee | Gezien bij | In BattBrain |
+|---|---|---|
+| Bewegende energiestroom; alleen actieve stromen bewegen, snelheid volgt het vermogen | Tesla Powerwall-app, HA-kaarten Power Flux en Sunsynk Power Flow | Energiestroom-kaart met deeltjes per stroom (zon→huis, net→batterij, …) |
+| Eén hoofdgetal of -boodschap per scherm | Ontwerpstudies van zonne-apps | Groot advies bovenaan met reden en "tot / daarna" |
+| Prijsgrafiek gecombineerd met plan of voorspelling | Energy Flow & Price Card, Genergy Dashboard (EMHASS-overlay) | Plangrafiek: laadtoestand boven, prijs per kwartier gekleurd naar actie eronder (geen dubbele as) |
+| Goedkope uren uitlichten | Apps voor dynamische tarieven | Label "Goedkoopste 2 uur" |
+| Eerlijk zelfverbruik tonen | Energiedashboards van omvormers | "x% van je verbruik uit zon en batterij" |
+
+Kleuren per actie: laden van net = blauw (`--c-charge`), zon opslaan = geel (`--c-pv`), ontladen = oranje
+(`--c-discharge`), vasthouden = lila (`--c-hold`, nieuw), zelfverbruik = grijs (`--c-idle`).
+Animaties staan uit bij `prefers-reduced-motion`.
+
 ## Bouwvolgorde
 
 1. ✅ Ontwerp vastleggen (dit document + `design/`)
 2. ✅ Kern: `app/battbrain_core` — planner, voorspellingen, besparing, met tests
 3. ✅ App-skelet: HA-verbinding, live SoC/prijs/zon/energiestroom/prijsverloop in het dashboard (alleen lezen)
-4. Adviseren: dagplan, tijdlijn, advies; dagelijkse vergelijking met de blueprint
+4. ✅ Adviseren: plan, advies met reden, beslissingenlogboek, vergelijking met de huidige sturing (% overeenkomst)
 5. Sturen: reserve-schakelaar + doel-SoC, met zelfverbruik als veilige terugval

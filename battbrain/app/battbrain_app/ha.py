@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import datetime
 from typing import Protocol
 
 
@@ -48,3 +50,21 @@ class HAClient:
             if e.code == 404:
                 return None
             raise
+
+    def get_config(self) -> dict:
+        """Home Assistant's core config (latitude, longitude, time zone)."""
+        return self._get("config")
+
+    def get_history(self, entity_ids: list[str], start: datetime, end: datetime) -> dict[str, list[dict]]:
+        """State history per entity between start and end (minimal rows, no attributes)."""
+        ids = [e for e in entity_ids if e]
+        if not ids:
+            return {}
+        q = urllib.parse.urlencode({"end_time": end.isoformat(), "filter_entity_id": ",".join(ids)})
+        rows = self._get(f"history/period/{urllib.parse.quote(start.isoformat())}?{q}"
+                         "&minimal_response&no_attributes")
+        out: dict[str, list[dict]] = {}
+        for series in rows or []:
+            if series:
+                out[series[0].get("entity_id", "")] = series
+        return out

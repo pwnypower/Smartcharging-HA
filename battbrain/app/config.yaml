@@ -1,7 +1,7 @@
 name: BattBrain
-version: "0.1.0"
+version: "0.2.0"
 slug: battbrain
-description: Onafhankelijke, open-source planner voor je thuisbatterij (beta, alleen lezen)
+description: Onafhankelijke, open-source planner voor je thuisbatterij (beta, adviesmodus)
 url: https://github.com/pwnypower/Smartcharging-HA/tree/main/battbrain
 arch:
   - aarch64
@@ -24,11 +24,17 @@ options:
   battery_power_entity: ""
   reserve_switch_entity: ""
   target_soc_entity: ""
+  load_power_entity: ""
   grid_power_sign: 1
   battery_power_sign: 1
   battery_capacity_kwh: 5.1
   max_power_kw: 3.0
   reserve_soc: 15
+  saldering_end: "2026-12-31"
+  export_deduction: 0.15
+  latitude: 0
+  longitude: 0
+  history_days: 14
   demo: false
 schema:
   soc_entity: str?
@@ -42,9 +48,15 @@ schema:
   battery_power_entity: str?
   reserve_switch_entity: str?
   target_soc_entity: str?
+  load_power_entity: str?
   grid_power_sign: list(1|-1)
   battery_power_sign: list(1|-1)
   battery_capacity_kwh: float(0.5,200)
   max_power_kw: float(0.1,50)
   reserve_soc: int(0,100)
+  saldering_end: str
+  export_deduction: float(0,1)
+  latitude: float
+  longitude: float
+  history_days: int(1,60)
   demo: bool

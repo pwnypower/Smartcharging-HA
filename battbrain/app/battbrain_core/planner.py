@@ -31,8 +31,12 @@ def cost_without_battery(slots: list[Slot]) -> float:
     return sum(_cost(s.net_kwh, s) for s in slots)
 
 
-def cost_self_use(slots: list[Slot], bat: Battery, soc: float) -> float:
-    """Expected cost if the inverter just does self-use (cover deficits, store surplus)."""
+def cost_self_use(slots: list[Slot], bat: Battery, soc: float, terminal: float = 0.0) -> float:
+    """Expected cost if the inverter just does self-use (cover deficits, store surplus).
+
+    `terminal` = value per stored kWh at the end; the change in stored energy is credited
+    so that plans ending fuller or emptier compare fairly.
+    """
     e = soc / 100 * bat.capacity_kwh
     floor = max(bat.min_soc, bat.reserve_soc) / 100 * bat.capacity_kwh
     total = 0.0
@@ -47,7 +51,7 @@ def cost_self_use(slots: list[Slot], bat: Battery, soc: float) -> float:
             e += c * bat.eta_charge
             grid = net + c
         total += _cost(grid, s)
-    return total
+    return total - (e - soc / 100 * bat.capacity_kwh) * terminal
 
 
 def make_plan(soc: float, slots: list[Slot], bat: Battery, resolution_pct: float = 1.0,
@@ -128,12 +132,13 @@ def make_plan(soc: float, slots: list[Slot], bat: Battery, resolution_pct: float
         a = b
 
     steps = _with_reasons(steps, slots, bat, reserve)
+    stored = (steps[-1].soc_end - soc) / 100 * cap
     return Plan(
         created=created or slots[0].start,
         steps=steps,
-        cost=sum(s.cost for s in steps),
+        cost=sum(s.cost for s in steps) - stored * terminal,
         cost_without_battery=cost_without_battery(slots),
-        cost_self_use=cost_self_use(slots, bat, soc),
+        cost_self_use=cost_self_use(slots, bat, soc, terminal),
         meta={"horizon_end": slots[-1].start, "terminal_value": terminal},
     )
 
@@ -155,8 +160,10 @@ def _with_reasons(steps: list[PlanStep], slots: list[Slot], bat: Battery, reserv
             reason = f"Duur moment ({_eur(st.price)}): huis draait op de batterij"
         elif st.soc_start <= reserve + 0.5 and slot.net_kwh > 0:
             reason = f"Batterij op minimale reserve ({reserve:.0f}%)"
-        elif slot.net_kwh < 0:
+        elif slot.net_kwh < 0 and st.soc_start >= 99:
             reason = "Batterij vol: overschot gaat naar het net"
+        elif slot.net_kwh < 0:
+            reason = f"Terugleveren ({_eur(slot.export_price)}) levert nu meer op dan opslaan"
         else:
             reason = "Geen voordeel om te laden of ontladen"
         out.append(PlanStep(st.start, st.action, st.soc_start, st.soc_end, st.price, st.grid_kwh, st.cost, reason))

@@ -8,11 +8,11 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div class="bg" aria-hidden="true"></div>
+  <div class="bg" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div></div>
   <header class="top">
-    <div class="brand"><img src="icon.svg" alt="" width="32" height="32"><span>Batt<b>Brain</b></span></div>
+    <div class="brand"><img src="icon.svg" alt="" width="34" height="34"><span>Batt<b>Brain</b></span></div>
     <div class="status">
-      <span class="pill" id="mode-pill"><span class="dot"></span><span id="mode-text">Adviesmodus · alleen lezen</span></span>
+      <span class="pill" id="mode-pill"><span class="dot"></span><span id="mode-text">Adviesmodus</span></span>
       <span class="meta" id="updated">Laden…</span>
     </div>
   </header>
@@ -20,73 +20,90 @@
   <main class="dash">
     <div id="notices"></div>
 
-    <section class="grid-3">
-      <article class="card" id="card-soc">
-        <div class="card-label">Laadtoestand</div>
-        <div class="soc-row">
-          <div class="battery" aria-hidden="true"><div class="battery-cap"></div><div class="battery-body"><div class="battery-fill" id="soc-fill"></div></div></div>
-          <div>
-            <div class="stat-value"><span id="soc">–</span><span class="stat-unit">%</span></div>
-            <div class="stat-label" id="soc-kwh">–</div>
-            <div class="stat-label" id="soc-reserve">–</div>
+    <!-- HERO: what BattBrain would do now -->
+    <section class="hero card" id="hero" data-action="idle">
+      <div class="hero-main">
+        <div class="orb" aria-hidden="true"><div class="orb-ring"></div><svg viewBox="0 0 24 24" class="orb-icon" id="hero-icon"></svg></div>
+        <div class="hero-text">
+          <div class="eyebrow">BattBrain adviseert nu</div>
+          <h1 id="hero-label">–</h1>
+          <p class="hero-reason" id="hero-reason">Het plan wordt berekend…</p>
+          <div class="hero-meta">
+            <span class="chip" id="hero-until"></span>
+            <span class="chip ghost" id="hero-next"></span>
           </div>
         </div>
-      </article>
-
-      <article class="card" id="card-price">
-        <div class="card-label">Huidige prijs (all-in)</div>
-        <div class="stat-value"><span id="price">–</span><span class="stat-unit">€/kWh</span></div>
-        <div class="badge" id="price-level">–</div>
-        <div class="stat-label" id="price-range">–</div>
-      </article>
-
-      <article class="card" id="card-solar">
-        <div class="card-label">Zon</div>
-        <div class="stat-value"><span id="solar-today">–</span><span class="stat-unit">kWh vandaag</span></div>
-        <div class="stat-label" id="solar-remaining">–</div>
-        <div class="stat-label" id="solar-tomorrow">–</div>
-      </article>
-    </section>
-
-    <section class="card">
-      <div class="card-label">Energiestroom nu</div>
-      <div class="flow" id="flow">
-        <div class="node pv"><div class="node-name">Zon</div><div class="node-val" id="flow-solar">–</div></div>
-        <div class="node grid"><div class="node-name">Net</div><div class="node-val" id="flow-grid">–</div><div class="node-dir" id="flow-grid-dir"></div></div>
-        <div class="node bat"><div class="node-name">Batterij</div><div class="node-val" id="flow-bat">–</div><div class="node-dir" id="flow-bat-dir"></div></div>
-        <div class="node house"><div class="node-name">Huis</div><div class="node-val" id="flow-house">–</div></div>
+      </div>
+      <div class="hero-side">
+        <div class="side-block">
+          <div class="side-label">Je huidige sturing</div>
+          <div class="match" id="hero-match">–</div>
+          <div class="side-sub" id="hero-agree"></div>
+        </div>
+        <div class="side-block">
+          <div class="side-label">Verwacht voordeel van dit plan</div>
+          <div class="savings"><span class="big" id="sav-none">–</span><span class="sub">t.o.v. geen batterij</span></div>
+          <div class="savings"><span class="mid" id="sav-self">–</span><span class="sub">extra t.o.v. alleen zelfverbruik</span></div>
+          <div class="side-sub" id="sav-horizon"></div>
+        </div>
       </div>
     </section>
 
+    <section class="grid-main">
+      <!-- live energy flow -->
+      <article class="card flow-card">
+        <div class="card-label">Energiestroom nu</div>
+        <div class="flow-wrap" id="flow"></div>
+        <div class="flow-foot"><span class="chip ghost" id="flow-summary"></span></div>
+      </article>
+
+      <!-- KPIs -->
+      <div class="kpis">
+        <article class="card kpi">
+          <div class="card-label">Laadtoestand</div>
+          <div class="kpi-row">
+            <div class="ring" id="soc-ring" style="--p:0"><span id="soc">–</span><small>%</small></div>
+            <div><div class="kpi-sub" id="soc-kwh">–</div><div class="kpi-sub" id="soc-reserve">–</div></div>
+          </div>
+        </article>
+        <article class="card kpi">
+          <div class="card-label">Prijs nu (all-in)</div>
+          <div class="kpi-value"><span id="price">–</span><small>€/kWh</small></div>
+          <div class="kpi-sub"><span class="badge" id="price-level">–</span> <span id="price-range"></span></div>
+        </article>
+        <article class="card kpi">
+          <div class="card-label">Zon</div>
+          <div class="kpi-value"><span id="solar-remaining">–</span><small>kWh nog verwacht</small></div>
+          <div class="kpi-sub" id="solar-sub">–</div>
+        </article>
+      </div>
+    </section>
+
+    <!-- plan -->
     <section class="card">
       <div class="card-head">
-        <div>
-          <div class="card-label">Prijsverloop</div>
-          <h2 id="curve-title">Vandaag</h2>
-        </div>
-        <div class="legend"><span class="k low"></span>laag <span class="k mid"></span>midden <span class="k high"></span>hoog</div>
+        <div><div class="card-label">Plan</div><h2 id="plan-title">Wat BattBrain van plan is</h2></div>
+        <span class="chip cheap" id="cheap"></span>
       </div>
-      <div class="curve" id="curve"></div>
-      <div class="stat-label" id="curve-note"></div>
+      <div class="legend" id="legend"></div>
+      <div class="plan" id="plan"><div class="tip" id="plan-tip" hidden></div></div>
+      <div class="kpi-sub" id="plan-note"></div>
     </section>
 
     <section class="grid-2">
       <article class="card">
-        <div class="card-label">Sturing</div>
-        <dl class="rows">
-          <div><dt>Modus</dt><dd id="ctl-mode">–</dd></div>
-          <div><dt>Reserveschakelaar</dt><dd id="ctl-reserve">–</dd></div>
-          <div><dt>Doel-SoC</dt><dd id="ctl-target">–</dd></div>
-        </dl>
-        <p class="hint">BattBrain leest alleen. Je huidige automatisering blijft de batterij aansturen.</p>
+        <div class="card-label">Beslissingen</div>
+        <ol class="timeline" id="timeline"><li class="empty">Nog geen beslissingen.</li></ol>
       </article>
       <article class="card">
-        <div class="card-label">Systeem</div>
+        <div class="card-label">Sturing en tarief</div>
         <dl class="rows">
-          <div><dt>Capaciteit</dt><dd id="sys-cap">–</dd></div>
-          <div><dt>Max. vermogen</dt><dd id="sys-pow">–</dd></div>
-          <div><dt>Minimale reserve</dt><dd id="sys-res">–</dd></div>
+          <div><dt>BattBrain zou zetten</dt><dd id="ctl-advice">–</dd></div>
+          <div><dt>Je automatisering staat op</dt><dd id="ctl-current">–</dd></div>
+          <div><dt>Teruglevering</dt><dd id="ctl-export">–</dd></div>
+          <div><dt>Batterij</dt><dd id="sys">–</dd></div>
         </dl>
+        <p class="hint">Adviesmodus: BattBrain verandert niets aan je batterij. Je huidige automatisering blijft sturen.</p>
       </article>
     </section>
   </main>

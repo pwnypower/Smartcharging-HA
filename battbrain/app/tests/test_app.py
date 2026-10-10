@@ -102,7 +102,7 @@ class SettingsTest(unittest.TestCase):
 class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        s = demo_settings(Settings(port=0, poll_seconds=3600))
+        s = demo_settings(Settings(port=0, poll_seconds=3600, data_dir=tempfile.mkdtemp()))
         cls.httpd = serve(s, DemoSource(NOW), host="127.0.0.1")
         cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
         Thread(target=cls.httpd.serve_forever, daemon=True).start()
