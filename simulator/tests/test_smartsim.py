@@ -64,6 +64,9 @@ class ScenarioTest(unittest.TestCase):
                 self.assertGreaterEqual(r.soc, self.bat.hw_min_soc - 1e-6, name)
                 self.assertLessEqual(r.soc, 100 + 1e-6, name)
 
+    def test_planner_beats_blueprint(self):
+        self.assertLess(self.sc["planner"].net_cost, self.sc["bp"].net_cost)
+
     def test_report_renders(self):
         sc = list(self.sc.values())
         html = build_report(self.ds, self.bat, sc, sc, 0.15, {"2026-10-07": 3.78})

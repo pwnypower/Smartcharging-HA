@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from .blueprint import BlueprintSettings, BlueprintStrategy
 from .model import Battery, Dataset
+from .planner import Planner
 from .strategies import (SimResult, residual_value, run_no_battery, run_optimal,
                          run_self_use)
 
@@ -47,5 +48,6 @@ def run_all(ds: Dataset, bat: Battery, settings: BlueprintSettings | None = None
     add(*run_blueprint(ds, bat, settings.with_(**ADVICE), "bp_advice",
                        "Blueprint met herfstadvies", start_last_paid=start_last_paid,
                        export_deduction=export_deduction))
+    add(Planner(bat, export_deduction).run(ds))
     add(run_optimal(ds, bat, export_deduction))
     return out

@@ -82,7 +82,7 @@ def build_report(ds: Dataset, bat: Battery, sc_2026: list[Scenario], sc_2027: li
     tiles_html = "".join(f'<div class="tile"><div class="tl">{a}</div><div class="tv">{b}</div><div class="ts">{c}</div></div>'
                          for a, b, c in tiles)
 
-    order = ["self", "bp", "bp_bias", "bp_advice", "optimal"]
+    order = ["self", "bp", "bp_bias", "bp_advice", "planner", "optimal"]
     bar_rows = [(by[k].result.label, [base - by[k].net_cost, base27 - by27[k].net_cost]) for k in order]
     bars = _bar_chart(bar_rows, ["2026 (salderen)", f"2027 (teruglevering −€{num(export_deduction, 2)}/kWh)"])
 
@@ -172,6 +172,10 @@ def build_report(ds: Dataset, bat: Battery, sc_2026: list[Scenario], sc_2027: li
         findings.append(f"Het herfstadvies levert {eur(bp.net_cost - adv.net_cost)} extra op.")
     findings.append(f"Zonder salderen (2027) groeit het verschil tussen blueprint en optimaal naar {eur(gap27)} "
                     "voor dezelfde dagen, omdat elke kWh die je zelf opslaat dan veel meer waard is.")
+    pl, pl27 = by["planner"].net_cost, by27["planner"].net_cost
+    findings.append(f"De planner (voorspelling + optimalisatie, zelfde schakelaars) bespaart {eur(base - pl)} nu en "
+                    f"{eur(base27 - pl27)} in 2027, tegen {eur(base - bp.net_cost)} en {eur(base27 - by27['bp'].net_cost)} "
+                    "voor de blueprint. Met meer verbruiksgeschiedenis wordt de voorspelling, en dus de planner, beter.")
     self27, bp27 = by27["self"].net_cost, by27["bp"].net_cost
     if self27 < bp27:
         findings.append(f"Let op: in 2027 doet gewoon zelfverbruik het {eur(bp27 - self27)} beter dan de blueprint. "

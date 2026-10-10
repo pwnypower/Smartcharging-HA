@@ -9,6 +9,7 @@ Speelt een afgelopen periode opnieuw af met je echte prijzen, zonopbrengst en ve
 | Blueprint nightly | Python-kopie van de beslislogica uit `Smartcharging Frankenergie - nightly.yaml` (v15.13) |
 | Blueprint, zon 30% te hoog | Zelfde, maar Forecast.Solar overschat de zon met 30% |
 | Blueprint met herfstadvies | Drempel 25 kWh, buffer 15%, ontlaadmarge 10% |
+| Planner | Prototype 2027-ready: plant elk uur het goedkoopste laadpad met voorspellingen, stuurt dezelfde schakelaars aan |
 | Optimaal | Wiskundig beste plan met perfecte voorspelling (bovengrens) |
 
 Alles wordt doorgerekend voor 2026 (salderen) en voor 2027 (teruglevering levert standaard €0,15/kWh minder op dan inkoop).
